@@ -68,8 +68,11 @@ const splitIntoSections = (text: string, maxSections = 0): string[] => {
 	// Third pass: Post-process and enhance sections
 	const enhancedSections = enhanceSections(processedSections)
 
+	// Fourth pass: Improve chunk quality and coherence
+	const qualityImprovedSections = improveChunkQuality(enhancedSections)
+
 	// Apply maxSections limit if specified
-	const finalSections = maxSections > 0 ? enhancedSections.slice(0, maxSections) : enhancedSections
+	const finalSections = maxSections > 0 ? qualityImprovedSections.slice(0, maxSections) : qualityImprovedSections
 
 	return finalSections.length > 0 ? finalSections : [cleanText]
 }
@@ -226,34 +229,11 @@ const splitBySentences = (text: string, maxLength: number): string[] => {
 }
 
 /**
- * Enhance sections with better formatting and headers
+ * Enhance sections with better formatting (without adding category headers)
  */
 const enhanceSections = (sections: string[]): string[] => {
 	return sections.map((section, index) => {
 		let enhanced = section
-
-		// Don't add headers if the section already has one
-		if (!enhanced.match(/^#{1,6}\s/)) {
-			// Determine section type and add appropriate header
-			if (enhanced.includes('```')) {
-				enhanced = `## 💻 Code Block\n\n${enhanced}`
-			} else if (enhanced.match(/^\s*\d+\.\s/) || enhanced.includes('Step ') || enhanced.includes('step ')) {
-				enhanced = `## 📋 Steps\n\n${enhanced}`
-			} else if (enhanced.match(/^\s*[-*+•]\s/) || enhanced.includes('•')) {
-				enhanced = `## 📝 Key Points\n\n${enhanced}`
-			} else if (enhanced.includes('Example:') || enhanced.includes('example') || enhanced.includes('Example')) {
-				enhanced = `## 💡 Example\n\n${enhanced}`
-			} else if (enhanced.includes('Note:') || enhanced.includes('Important:') || enhanced.includes('Warning:')) {
-				enhanced = `## ⚠️ Important\n\n${enhanced}`
-			} else if (enhanced.includes('function') || enhanced.includes('const ') || enhanced.includes('class ') || enhanced.includes('import ')) {
-				enhanced = `## ⚙️ Technical\n\n${enhanced}`
-			} else if (enhanced.includes('Summary') || enhanced.includes('Conclusion') || enhanced.includes('conclusion')) {
-				enhanced = `## 📊 Summary\n\n${enhanced}`
-			} else {
-				// Generic section header
-				enhanced = `## 🔹 Part ${index + 1}\n\n${enhanced}`
-			}
-		}
 
 		// Improve bullet point formatting
 		enhanced = enhanced.replace(/^\s*[-*+]\s/gm, '• ')
@@ -1274,29 +1254,6 @@ const createMindmapNodes = async (
 	const centerX = parentNode.x + parentNode.width / 2
 	const centerY = parentNode.y + parentNode.height / 2
 
-	// Enhanced visual hierarchy - make parent node more prominent
-	const enhanceParentNode = () => {
-		parentNode.setData({
-			...parentNode.getData(),
-			color: '1' // Red color for central importance
-		})
-
-		// Optionally resize parent to be more prominent
-		const currentWidth = parentNode.width
-		const currentHeight = parentNode.height
-		const enhancedWidth = Math.max(currentWidth, 400)
-		const enhancedHeight = Math.max(currentHeight, 120)
-
-		if (enhancedWidth !== currentWidth || enhancedHeight !== currentHeight) {
-			parentNode.moveAndResize({
-				x: parentNode.x - (enhancedWidth - currentWidth) / 2,
-				y: parentNode.y - (enhancedHeight - currentHeight) / 2,
-				width: enhancedWidth,
-				height: enhancedHeight
-			})
-		}
-	}
-
 	// Determine content-based colors with better visual distinction
 	const getNodeColor = (text: string, index: number) => {
 		if (settings.enableMindmapColorCoding) {
@@ -1330,7 +1287,7 @@ const createMindmapNodes = async (
 		}
 
 		// Enhanced color variety when color coding is disabled
-		const colorPalette = ['2', '3', '4', '5', '6'] // Skip red (1) as it's for parent
+		const colorPalette = ['2', '3', '4', '5', '6'] // Don't modify parent node color
 		return colorPalette[index % colorPalette.length]
 	}
 
@@ -1341,9 +1298,6 @@ const createMindmapNodes = async (
 		spacious: { multiplier: 1.6, minRadius: 600, radiusIncrement: 50 }
 	}
 	const spacingSettings = spacingConfig[settings.mindmapSpacing] || spacingConfig.normal
-
-	// Enhanced parent node styling
-	enhanceParentNode()
 
 	// Analyze canvas context for intelligent layout selection (with error handling)
 	let canvasContext
@@ -1829,19 +1783,47 @@ class StreamingHandler {
 		const currentChunkText = this.getCurrentChunkText()
 		if (currentChunkText.length < this.settings.streamingChunkSize) return false
 
-		// Look for natural break points
-		const recentText = this.currentText.slice(-100) // Last 100 chars
+		// Look for natural break points in recent text
+		const recentText = this.currentText.slice(-200) // Increased from 100 for better context
+		const currentChunk = this.getCurrentChunkText()
 
-		// Check for structural breaks
-		const hasStructuralBreak = !!(recentText.includes('\n\n') ||
-			recentText.includes('##') ||
-			recentText.match(/\d+\.\s/) ||
-			recentText.includes('```'))
+		// Enhanced structural break detection
+		const hasStructuralBreak = !!(
+			recentText.includes('\n\n') ||           // Paragraph breaks
+			recentText.includes('##') ||             // Headers
+			recentText.match(/\d+\.\s/) ||          // Numbered lists
+			recentText.includes('```') ||            // Code blocks
+			recentText.match(/^[-*+•]\s/m) ||       // Bullet points
+			recentText.includes('Step ') ||          // Step indicators
+			recentText.match(/[A-Z][^.]*:\s*$/m)    // Definition patterns
+		)
 
-		// Check for sentence boundaries
+		// Enhanced sentence boundary detection
 		const hasSentenceBreak = !!recentText.match(/[.!?]\s+[A-Z]/)
 
-		return hasStructuralBreak || (hasSentenceBreak && currentChunkText.length > this.settings.streamingChunkSize * 1.5)
+		// Semantic coherence check - avoid breaking mid-concept
+		const hasSemanticBreak = currentChunk.length > this.settings.streamingChunkSize * 1.2 &&
+			detectTopicChange(currentChunk, recentText.slice(-50))
+
+		// Quality thresholds
+		const isLongEnough = currentChunk.length > this.settings.streamingChunkSize * 1.5
+		const isReasonableSize = currentChunk.length < this.settings.streamingChunkSize * 3
+
+		// Decision logic: prioritize structural breaks, then semantic coherence
+		if (hasStructuralBreak && currentChunk.length > this.settings.streamingChunkSize * 0.8) {
+			return true
+		}
+
+		if (hasSemanticBreak && isReasonableSize) {
+			return true
+		}
+
+		// Fallback: use sentence breaks for very long chunks
+		if (hasSentenceBreak && isLongEnough) {
+			return true
+		}
+
+		return false
 	}
 
 	/**
@@ -1903,39 +1885,11 @@ class StreamingHandler {
 				this.canvas.removeNode(node)
 			}
 
-			// Create summary/parent node with performance metrics if enabled
-			let summaryText = `AI Response (${this.chunks.length} parts)\n\n${this.chunks[0].substring(0, 150)}...`
+			// Create mindmap layout using the original user question as root
+			await createMindmapNodes(this.canvas, this.parentNode, this.chunks, this.logDebug, this.settings)
 
-			if (this.settings.enableStreamingMetrics) {
-				const elapsed = (Date.now() - this.startTime) / 1000
-				const tokensPerSecond = this.tokenCount > 0 && elapsed > 0 ? Math.round(this.tokenCount / elapsed) : 0
-				const charsPerSecond = this.currentText.length > 0 && elapsed > 0 ? Math.round(this.currentText.length / elapsed) : 0
-
-				summaryText += `\n\n📊 Streaming Performance:\n• ${this.tokenCount} tokens in ${elapsed.toFixed(1)}s\n• ${tokensPerSecond} tokens/sec, ${charsPerSecond} chars/sec`
-
-				if (this.retryCount > 0) {
-					summaryText += `\n• ${this.retryCount} retries required`
-				}
-			}
-
-			const summaryNode = createNode(
-				this.canvas,
-				this.parentNode,
-				{
-					text: summaryText,
-					size: { height: calcHeight({ text: summaryText, parentHeight: this.parentNode.height }) }
-				},
-				{
-					color: assistantColor,
-					chat_role: 'assistant'
-				}
-			)
-
-			// Create mindmap layout
-			await createMindmapNodes(this.canvas, summaryNode, this.chunks, this.logDebug, this.settings)
-
-			// Select the summary node
-			this.canvas.selectOnly(summaryNode, false)
+			// Select the original user question node
+			this.canvas.selectOnly(this.parentNode, false)
 
 		} catch (error) {
 			this.logDebug('Error finalizing mindmap:', error)
@@ -2348,37 +2302,19 @@ export function noteGenerator(
 						// Remove the placeholder node since we'll create multiple nodes
 						canvas.removeNode(created)
 
-						// Create a summary node with the first section or a brief overview
-						const summaryText = sections.length > 3
-							? `AI Response Summary (${sections.length} parts)\n\n${sections[0].substring(0, 150)}...`
-							: sections[0]
-
-						const summaryNode = createNode(
-							canvas,
-							node,
-							{
-								text: summaryText,
-								size: { height: calcHeight({ text: summaryText, parentHeight: node.height }) }
-							},
-							{
-								color: assistantColor,
-								chat_role: 'assistant'
-							}
-						)
-
-						// Create mindmap nodes for all sections
-						const mindmapNodes = await createMindmapNodes(canvas, summaryNode, sections, logDebug, settings)
+						// Create mindmap nodes using the original user question as root
+						const mindmapNodes = await createMindmapNodes(canvas, node, sections, logDebug, settings)
 
 						new Notice(`Created mindmap with ${mindmapNodes.length} notes`)
 
-						// Select the summary node
+						// Select the original user question node
 						const selectedNoteId =
 							canvas.selection?.size === 1
 								? Array.from(canvas.selection.values())?.[0]?.id
 								: undefined
 
 						if (selectedNoteId === node?.id || selectedNoteId == null) {
-							canvas.selectOnly(summaryNode, false /* startEditing */)
+							canvas.selectOnly(node, false /* startEditing */)
 						}
 
 						await canvas.requestSave()
@@ -2510,35 +2446,19 @@ export function noteGenerator(
 					// Remove the placeholder node since we'll create multiple nodes
 					canvas.removeNode(created)
 
-					// Create a summary node
-					const summaryText = `AI Mindmap Response (${sections.length} parts)\n\n${sections[0].substring(0, 150)}...`
-
-					const summaryNode = createNode(
-						canvas,
-						node,
-						{
-							text: summaryText,
-							size: { height: calcHeight({ text: summaryText, parentHeight: node.height }) }
-						},
-						{
-							color: assistantColor,
-							chat_role: 'assistant'
-						}
-					)
-
-					// Create mindmap nodes for all sections
-					const mindmapNodes = await createMindmapNodes(canvas, summaryNode, sections, logDebug, settings)
+					// Create mindmap nodes using the original user question as root
+					const mindmapNodes = await createMindmapNodes(canvas, node, sections, logDebug, settings)
 
 					new Notice(`Created mindmap with ${mindmapNodes.length} notes`)
 
-					// Select the summary node
+					// Select the original user question node
 					const selectedNoteId =
 						canvas.selection?.size === 1
 							? Array.from(canvas.selection.values())?.[0]?.id
 							: undefined
 
 					if (selectedNoteId === node?.id || selectedNoteId == null) {
-						canvas.selectOnly(summaryNode, false /* startEditing */)
+						canvas.selectOnly(node, false /* startEditing */)
 					}
 				} else {
 					// Fallback to single note if splitting didn't work
@@ -2601,4 +2521,141 @@ function getTokenLimit(settings: ChatStreamSettings) {
 	return settings.maxInputTokens
 		? Math.min(settings.maxInputTokens, CHAT_MODELS.GPT_35_TURBO_0125.tokenLimit)
 		: CHAT_MODELS.GPT_35_TURBO_0125.tokenLimit
+}
+
+/**
+ * Enhanced semantic chunking based on topic coherence
+ */
+const detectTopicChange = (currentChunk: string, newSentence: string): boolean => {
+	// Extract key terms from both chunks
+	const currentTerms = extractKeyTerms(currentChunk)
+	const newTerms = extractKeyTerms(newSentence)
+
+	// Calculate semantic similarity
+	const similarity = calculateTermSimilarity(currentTerms, newTerms)
+
+	// Topic change threshold - lower means more sensitive to changes
+	const TOPIC_CHANGE_THRESHOLD = 0.3
+
+	return similarity < TOPIC_CHANGE_THRESHOLD
+}
+
+/**
+ * Extract meaningful terms from text for semantic analysis
+ */
+const extractKeyTerms = (text: string): Set<string> => {
+	const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those'])
+
+	return new Set(
+		text.toLowerCase()
+			.replace(/[^\w\s]/g, ' ')
+			.split(/\s+/)
+			.filter(word => word.length > 2 && !stopWords.has(word))
+			.slice(0, 20) // Limit for performance
+	)
+}
+
+/**
+ * Calculate similarity between two sets of terms
+ */
+const calculateTermSimilarity = (terms1: Set<string>, terms2: Set<string>): number => {
+	if (terms1.size === 0 || terms2.size === 0) return 0
+
+	const intersection = new Set([...terms1].filter(x => terms2.has(x)))
+	const union = new Set([...terms1, ...terms2])
+
+	return intersection.size / union.size // Jaccard similarity
+}
+
+/**
+ * Post-process chunks to improve quality and coherence
+ */
+const improveChunkQuality = (chunks: string[]): string[] => {
+	if (chunks.length <= 1) return chunks
+
+	const improvedChunks: string[] = []
+
+	for (let i = 0; i < chunks.length; i++) {
+		let chunk = chunks[i]
+
+		// Fix orphaned references at the start of chunks
+		if (i > 0) {
+			chunk = fixOrphanedReferences(chunk, chunks[i - 1])
+		}
+
+		// Ensure logical completeness
+		chunk = ensureCompleteness(chunk)
+
+		// Add context hints for better readability
+		if (i > 0 && needsContextHint(chunk, chunks[i - 1])) {
+			chunk = addContextHint(chunk, i, chunks.length)
+		}
+
+		improvedChunks.push(chunk)
+	}
+
+	return improvedChunks
+}
+
+/**
+ * Fix orphaned references like "this", "it", "these" without clear antecedents
+ */
+const fixOrphanedReferences = (currentChunk: string, previousChunk: string): string => {
+	const orphanedPatterns = [
+		/^(This|These|It|They|That|Those)\s/i,
+		/^(The above|The following|As mentioned)\s/i
+	]
+
+	for (const pattern of orphanedPatterns) {
+		if (pattern.test(currentChunk.trim())) {
+			// Extract context from previous chunk (last sentence or key topic)
+			const contextSentences = previousChunk.split(/[.!?]/).filter(s => s.trim().length > 0)
+			const context = contextSentences.slice(-1)[0]?.trim() || ''
+
+			if (context.length > 10 && context.length < 100) {
+				// Add brief context reference
+				const briefContext = context.length > 50 ? context.substring(0, 47) + '...' : context
+				currentChunk = `*Continuing from: "${briefContext}"*\n\n${currentChunk}`
+			}
+			break
+		}
+	}
+
+	return currentChunk
+}
+
+/**
+ * Ensure chunk has logical completeness (not cut off mid-sentence)
+ */
+const ensureCompleteness = (chunk: string): string => {
+	const trimmed = chunk.trim()
+
+	// Check if chunk ends abruptly (no proper punctuation)
+	if (trimmed.length > 50 && !trimmed.match(/[.!?]$/)) {
+		// Add continuation indicator
+		return trimmed + '...'
+	}
+
+	return chunk
+}
+
+/**
+ * Determine if chunk needs context hint
+ */
+const needsContextHint = (currentChunk: string, previousChunk: string): boolean => {
+	// Add hints for chunks that start with technical terms without definition
+	const startsWithTechnicalTerm = /^[A-Z][a-z]*([A-Z][a-z]*)+/.test(currentChunk.trim())
+	const hasNoInitialDefinition = !currentChunk.substring(0, 100).includes(':') &&
+		!currentChunk.substring(0, 100).includes(' is ') &&
+		!currentChunk.substring(0, 100).includes(' are ')
+
+	return startsWithTechnicalTerm && hasNoInitialDefinition && previousChunk.length > 100
+}
+
+/**
+ * Add subtle context hint to chunk
+ */
+const addContextHint = (chunk: string, chunkIndex: number, totalChunks: number): string => {
+	const hintPrefix = `*Part ${chunkIndex + 1}/${totalChunks}*\n\n`
+	return hintPrefix + chunk
 }
