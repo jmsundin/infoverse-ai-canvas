@@ -1,0 +1,136 @@
+{
+	"openai": {
+		"simple_response": {
+			"choices": [
+				{
+					"message": {
+						"role": "assistant",
+						"content": "This is a simple test response from OpenAI."
+					}
+				}
+			],
+			"usage": {
+				"prompt_tokens": 10,
+				"completion_tokens": 15,
+				"total_tokens": 25
+			}
+		},
+		"mindmap_response": {
+			"choices": [
+				{
+					"message": {
+						"role": "assistant",
+						"content": "# Main Topic\nThis is the central idea\n\n## Subtopic 1\nFirst branch of information\n\n## Subtopic 2\nSecond branch of information\n\n## Subtopic 3\nThird branch with more details"
+					}
+				}
+			],
+			"usage": {
+				"prompt_tokens": 20,
+				"completion_tokens": 45,
+				"total_tokens": 65
+			}
+		},
+		"long_response": {
+			"choices": [
+				{
+					"message": {
+						"role": "assistant",
+						"content": "This is a much longer response that contains multiple paragraphs of text. It's designed to test how the plugin handles longer responses and whether it properly splits them into multiple nodes when auto-split is enabled.\n\nThis is the second paragraph of the response, which continues the thought from the first paragraph and adds more detail.\n\nFinally, this is the third paragraph that concludes the response with additional insights and summary information."
+					}
+				}
+			],
+			"usage": {
+				"prompt_tokens": 15,
+				"completion_tokens": 85,
+				"total_tokens": 100
+			}
+		},
+		"error_response": {
+			"error": {
+				"message": "Invalid API key provided",
+				"type": "invalid_request_error",
+				"code": "invalid_api_key"
+			}
+		}
+	},
+	"gemini": {
+		"simple_response": {
+			"candidates": [
+				{
+					"content": {
+						"parts": [
+							{
+								"text": "This is a simple test response from Gemini."
+							}
+						],
+						"role": "model"
+					}
+				}
+			],
+			"usageMetadata": {
+				"promptTokenCount": 8,
+				"candidatesTokenCount": 12,
+				"totalTokenCount": 20
+			}
+		},
+		"mindmap_response": {
+			"candidates": [
+				{
+					"content": {
+						"parts": [
+							{
+								"text": "# Central Concept\nCore idea explanation\n\n## Branch A\nFirst set of related ideas\n\n## Branch B\nSecond set of related ideas\n\n## Branch C\nThird set of related ideas"
+							}
+						],
+						"role": "model"
+					}
+				}
+			],
+			"usageMetadata": {
+				"promptTokenCount": 18,
+				"candidatesTokenCount": 35,
+				"totalTokenCount": 53
+			}
+		}
+	},
+	"streaming": {
+		"chunks": [
+			{
+				"choices": [
+					{
+						"delta": {
+							"content": "This is"
+						}
+					}
+				]
+			},
+			{
+				"choices": [
+					{
+						"delta": {
+							"content": " a streaming"
+						}
+					}
+				]
+			},
+			{
+				"choices": [
+					{
+						"delta": {
+							"content": " response"
+						}
+					}
+				]
+			},
+			{
+				"choices": [
+					{
+						"delta": {
+							"content": " test."
+						}
+					}
+				]
+			}
+		]
+	}
+}

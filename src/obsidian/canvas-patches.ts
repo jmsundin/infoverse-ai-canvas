@@ -23,11 +23,6 @@ export type CanvasView = ItemView & {
 const minWidth = 360
 
 /**
- * Assumed pixel width per character
- */
-const pxPerChar = 5
-
-/**
  * Assumed pixel height per line
  */
 const pxPerLine = 28
@@ -48,21 +43,151 @@ const newNoteMargin = 60
 const minHeight = 60
 
 /**
- * Choose height for generated note based on text length and parent height.
- * For notes beyond a few lines, the note will have scroll bar.
- * Not a precise science, just something that is not surprising.
+ * Choose height for generated note based on actual number of lines in the text.
+ * Each line gets pxPerLine height plus padding.
  */
+
 export const calcHeight = (options: { parentHeight: number; text: string }) => {
+	// Split text into segments by newline characters
+	const segments = options.text.split('\n')
+
+	// Assume average characters per line based on typical font and width
+	// This is an approximation - in a real implementation you'd want to measure actual text
+	const avgCharsPerLine = 50 // Approximate characters that fit in minWidth (360px)
+
+	let totalVisualLines = 0
+
+	segments.forEach(segment => {
+		if (segment.trim() === '') {
+			// Empty line still takes up one visual line
+			totalVisualLines += 1
+		} else {
+			// Calculate how many visual lines this segment will take
+			const segmentLength = segment.length
+			const visualLinesForSegment = Math.ceil(segmentLength / avgCharsPerLine)
+			totalVisualLines += Math.max(1, visualLinesForSegment)
+		}
+	})
+
+	// Calculate height based on total visual lines
 	const calcTextHeight = Math.round(
-		textPaddingHeight +
-			(pxPerLine * options.text.length) / (minWidth / pxPerChar)
+		textPaddingHeight + (pxPerLine * totalVisualLines)
 	)
-	return Math.max(options.parentHeight, calcTextHeight)
+
+	return Math.max(minHeight, calcTextHeight)
+}
+
+/**
+ * Determine the best position for a new node relative to its parent
+ */
+const determineNodePosition = (
+	canvas: Canvas,
+	parentNode: CanvasNode,
+	nodeOptions: CreateNodeOptions
+) => {
+	const { text } = nodeOptions
+	const width = nodeOptions?.size?.width || Math.max(minWidth, parentNode?.width)
+	const height = nodeOptions?.size?.height || calcHeight({ text, parentHeight: parentNode.height })
+
+	// Get existing children of the parent
+	const children = canvas
+		.getEdgesForNode(parentNode)
+		.filter((edge) => edge.from.node.id === parentNode.id)
+		.map((edge) => edge.to.node)
+
+	// If no children, place to the right
+	if (children.length === 0) {
+		return {
+			x: parentNode.x + parentNode.width + newNoteMargin,
+			y: parentNode.y + (parentNode.height - height) / 2,
+			width,
+			height,
+			fromSide: 'right' as const,
+			toSide: 'left' as const
+		}
+	}
+
+	// Analyze existing children positions to determine the best placement
+	const positions = {
+		right: children.filter(child => child.x > parentNode.x + parentNode.width),
+		left: children.filter(child => child.x + child.width < parentNode.x),
+		top: children.filter(child => child.y + child.height < parentNode.y),
+		bottom: children.filter(child => child.y > parentNode.y + parentNode.height)
+	}
+
+	// Find the direction with the least nodes, preferring right, then bottom, then top, then left
+	const directionPriority = ['right', 'bottom', 'top', 'left'] as const
+	const chosenDirection = directionPriority.find(dir => positions[dir].length === 0) ||
+		directionPriority.reduce((min, dir) =>
+			positions[dir].length < positions[min].length ? dir : min
+		)
+
+	let x: number, y: number, fromSide: string, toSide: string
+
+	switch (chosenDirection) {
+		case 'right': {
+			const rightmostX = Math.max(
+				parentNode.x + parentNode.width,
+				...positions.right.map(child => child.x + child.width)
+			)
+			x = rightmostX + newNoteMargin
+			y = parentNode.y + (parentNode.height - height) / 2
+			fromSide = 'right'  // Edge leaves from right side of parent
+			toSide = 'left'     // Edge enters left side of right child
+			break
+		}
+
+		case 'left': {
+			const leftmostX = Math.min(
+				parentNode.x,
+				...positions.left.map(child => child.x)
+			)
+			x = leftmostX - width - newNoteMargin
+			y = parentNode.y + (parentNode.height - height) / 2
+			fromSide = 'left'   // Edge leaves from left side of parent
+			toSide = 'right'    // Edge enters right side of left child
+			break
+		}
+
+		case 'top': {
+			const topmostY = Math.min(
+				parentNode.y,
+				...positions.top.map(child => child.y)
+			)
+			x = parentNode.x + (parentNode.width - width) / 2
+			y = topmostY - height - newNoteMargin
+			fromSide = 'top'    // Edge leaves from top side of parent
+			toSide = 'bottom'   // Edge enters bottom side of top child
+			break
+		}
+
+		case 'bottom': {
+			const bottommostY = Math.max(
+				parentNode.y + parentNode.height,
+				...positions.bottom.map(child => child.y + child.height)
+			)
+			x = parentNode.x + (parentNode.width - width) / 2
+			y = bottommostY + newNoteMargin
+			fromSide = 'bottom' // Edge leaves from bottom side of parent
+			toSide = 'top'      // Edge enters top side of bottom child
+			break
+		}
+
+		default: {
+			// Fallback to right
+			x = parentNode.x + parentNode.width + newNoteMargin
+			y = parentNode.y + (parentNode.height - height) / 2
+			fromSide = 'right'
+			toSide = 'left'
+		}
+	}
+
+	return { x, y, width, height, fromSide, toSide }
 }
 
 /**
  * Create new node as descendant from the parent node.
- * Align and offset relative to siblings.
+ * Intelligently positions the node and creates proper edge connections.
  */
 export const createNode = (
 	canvas: Canvas,
@@ -74,49 +199,13 @@ export const createNode = (
 		throw new Error('Invalid arguments')
 	}
 
-	const { text } = nodeOptions
-	const width =
-		nodeOptions?.size?.width || Math.max(minWidth, parentNode?.width)
-	const height =
-		nodeOptions?.size?.height ||
-		Math.max(
-			minHeight,
-			parentNode && calcHeight({ text, parentHeight: parentNode.height })
-		)
-
-	const siblings =
-		parent &&
-		canvas
-			.getEdgesForNode(parentNode)
-			.filter((n) => n.from.node.id == parentNode.id)
-			.map((e) => e.to.node)
-
-	// Failsafe leftmost value.
-	const farLeft = parentNode.y - parentNode.width * 5
-	const siblingsRight = siblings?.length
-		? siblings.reduce(
-				(right, sib) => Math.max(right, sib.x + sib.width),
-				farLeft
-		  )
-		: undefined
-	const priorSibling = siblings[siblings.length - 1]
-
-	// Position left at right of prior sibling, otherwise aligned with parent
-	const x = siblingsRight != null ? siblingsRight + newNoteMargin : parentNode.x
-
-	// Position top at prior sibling top, otherwise offset below parent
-	const y =
-		(priorSibling
-			? priorSibling.y
-			: parentNode.y + parentNode.height + newNoteMargin) +
-		// Using position=left, y value is treated as vertical center
-		height * 0.5
+	const position = determineNodePosition(canvas, parentNode, nodeOptions)
 
 	const newNode = canvas.createTextNode({
-		pos: { x, y },
+		pos: { x: position.x, y: position.y },
 		position: 'left',
-		size: { height, width },
-		text,
+		size: { height: position.height, width: position.width },
+		text: nodeOptions.text,
 		focus: false
 	})
 
@@ -132,12 +221,12 @@ export const createNode = (
 		randomHexString(16),
 		{
 			fromOrTo: 'from',
-			side: 'bottom',
+			side: position.fromSide,
 			node: parentNode
 		},
 		{
 			fromOrTo: 'to',
-			side: 'top',
+			side: position.toSide,
 			node: newNode
 		}
 	)

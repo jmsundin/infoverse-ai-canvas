@@ -1,11 +1,11 @@
 {
-	"id": "chat-stream",
-	"name": "Chat Stream",
+	"id": "infoverse-ai-canvas",
+	"name": "Infoverse AI Canvas",
 	"version": "1.4.8",
 	"minAppVersion": "1.1.10",
-	"description": "Create branching GPT chats using canvas notes.",
+	"description": "Create branching AI chats using canvas notes with support for OpenAI and Google Gemini models.",
 	"author": "Ryan P Smith",
-	"authorUrl": "https://github.com/rpggio",
+	"authorUrl": "https://github.com/jmsundin",
 	"isDesktopOnly": true,
 	"fundingUrl": {
 		"Buy Me a Coffee": "https://bmc.link/ryanp"

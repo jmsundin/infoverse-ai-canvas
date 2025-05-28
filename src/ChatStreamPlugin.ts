@@ -24,8 +24,8 @@ export class ChatStreamPlugin extends Plugin {
 
 		this.logDebug = this.settings.debug
 			? (message?: unknown, ...optionalParams: unknown[]) =>
-					console.debug('Chat Stream: ' + message, ...optionalParams)
-			: () => {}
+				console.debug('Chat Stream: ' + message, ...optionalParams)
+			: () => { }
 
 		this.logDebug('Debug logging enabled')
 
@@ -57,6 +57,20 @@ export class ChatStreamPlugin extends Plugin {
 				{
 					modifiers: ['Alt', 'Shift'],
 					key: 'G'
+				}
+			]
+		})
+
+		this.addCommand({
+			id: 'generate-mindmap',
+			name: 'Generate AI mindmap',
+			callback: () => {
+				generator.generateMindmapNote()
+			},
+			hotkeys: [
+				{
+					modifiers: ['Alt', 'Shift'],
+					key: 'M'
 				}
 			]
 		})

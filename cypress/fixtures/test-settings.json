@@ -1,0 +1,70 @@
+{
+	"default": {
+		"openaiApiKey": "test-openai-key-123",
+		"geminiApiKey": "test-gemini-key-456",
+		"provider": "OpenAI",
+		"temperature": 0.7,
+		"systemPrompt": "You are a helpful assistant for testing purposes.",
+		"maxInputTokens": 4000,
+		"maxResponseTokens": 1000,
+		"enableAutoSplit": false,
+		"enableStreaming": false,
+		"debug": false
+	},
+	"streaming_enabled": {
+		"openaiApiKey": "test-openai-key-123",
+		"provider": "OpenAI",
+		"temperature": 0.5,
+		"enableStreaming": true,
+		"streamingUpdateInterval": 200,
+		"streamingChunkSize": 100,
+		"showStreamingProgress": true,
+		"enableStreamingControls": true,
+		"streamingRetryAttempts": 3,
+		"streamingTimeout": 30000
+	},
+	"mindmap_config": {
+		"openaiApiKey": "test-openai-key-123",
+		"provider": "OpenAI",
+		"temperature": 0.8,
+		"enableAutoSplit": true,
+		"maxSplitNotes": 6,
+		"mindmapColorTheme": "4",
+		"enableMindmapColorCoding": true,
+		"mindmapSpacing": "normal",
+		"mindmapLayoutAlgorithm": "organic"
+	},
+	"gemini_provider": {
+		"geminiApiKey": "test-gemini-key-456",
+		"provider": "Gemini",
+		"lastGeminiModel": "gemini-1.5-pro",
+		"temperature": 0.9,
+		"systemPrompt": "You are a creative assistant using Gemini.",
+		"maxInputTokens": 8000,
+		"maxResponseTokens": 2000
+	},
+	"debug_mode": {
+		"openaiApiKey": "test-openai-key-123",
+		"provider": "OpenAI",
+		"debug": true,
+		"enableStreamingMetrics": true,
+		"systemPrompt": "Debug mode assistant for detailed testing.",
+		"temperature": 0.1
+	},
+	"high_limits": {
+		"openaiApiKey": "test-openai-key-123",
+		"provider": "OpenAI",
+		"maxInputTokens": 16000,
+		"maxResponseTokens": 4000,
+		"temperature": 1.0,
+		"enableAutoSplit": true,
+		"maxSplitNotes": 10
+	},
+	"minimal": {
+		"openaiApiKey": "test-key",
+		"provider": "OpenAI",
+		"temperature": 0,
+		"maxInputTokens": 100,
+		"maxResponseTokens": 50
+	}
+}
