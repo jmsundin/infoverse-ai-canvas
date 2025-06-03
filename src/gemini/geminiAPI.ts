@@ -1,4 +1,5 @@
 import { request, RequestUrlParam } from 'obsidian'
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
 
 export const GEMINI_COMPLETIONS_URL = `https://generativelanguage.googleapis.com/v1beta/models`
 
@@ -148,9 +149,7 @@ export async function getGeminiCompletion(
 }
 
 /**
- * Streaming completion for Gemini with real-time token delivery
- * Note: Gemini API doesn't support true streaming like OpenAI, so we simulate it
- * by making the regular call and delivering chunks progressively
+ * Real streaming completion for Gemini using the official SDK
  */
 export async function getGeminiStreamingCompletion(
 	apiKey: string,
@@ -162,44 +161,90 @@ export async function getGeminiStreamingCompletion(
 	settings?: Partial<GeminiRequest['generationConfig']>
 ): Promise<void> {
 	try {
-		console.log('getGeminiStreamingCompletion called')
-		console.debug('Calling Gemini streaming (simulated)', { model, messagesCount: messages.length })
+		console.log('getGeminiStreamingCompletion called with real streaming')
+		console.debug('Calling Gemini streaming (real)', { model, messagesCount: messages.length })
 
-		// First get the complete response
-		const fullText = await getGeminiCompletion(apiKey, model, messages, settings)
-		console.log('fullText:', fullText)
+		const genAI = new GoogleGenerativeAI(apiKey)
+		const geminiModel = genAI.getGenerativeModel({
+			model: model || GEMINI_MODELS.GEMINI_1_5_FLASH.name,
+			generationConfig: {
+				...defaultGeminiSettings,
+				...settings
+			},
+			safetySettings: [
+				{
+					category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+					threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+					threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+					threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+					threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+				},
+			],
+		})
 
-		if (!fullText) {
-			onError(new Error('No response from Gemini API'))
-			return
-		}
+		// Handle system prompt by prepending it to the first user message
+		const systemPrompt = messages.find(msg => msg.role === 'system')?.content
+		const conversationMessages = messages.filter(msg => msg.role !== 'system')
 
-		// Simulate streaming by delivering the text in chunks
-		const chunkSize = 1 // Characters per chunk
-		const delay = 20 // Milliseconds between chunks
-
-		let currentIndex = 0
-
-		const streamChunk = () => {
-			if (currentIndex >= fullText.length) {
-				onComplete(fullText)
-				return
+		let prompt = ''
+		if (systemPrompt && conversationMessages.length > 0) {
+			const firstUserMessage = conversationMessages.find(msg => msg.role === 'user')
+			if (firstUserMessage) {
+				prompt = `${systemPrompt}\n\n${firstUserMessage.content}`
+			} else {
+				prompt = conversationMessages[0]?.content || ''
 			}
-
-			const chunk = fullText.slice(currentIndex, currentIndex + chunkSize)
-			console.log('Processing chunk:', chunk)
-			currentIndex += chunkSize
-
-			console.log('Calling onToken with chunk:', chunk)
-			onToken(chunk)
-			setTimeout(streamChunk, delay)
+		} else {
+			// If no system prompt, use the last user message or combine all messages
+			const userMessages = conversationMessages.filter(msg => msg.role === 'user')
+			prompt = userMessages[userMessages.length - 1]?.content || conversationMessages[conversationMessages.length - 1]?.content || ''
 		}
 
-		// Start streaming
-		streamChunk()
+		console.log('Streaming prompt:', prompt)
+
+		// Start the real streaming
+		const streamingResult = await geminiModel.generateContentStream([prompt])
+
+		let fullText = ''
+		for await (const chunk of streamingResult.stream) {
+			const chunkText = chunk.text()
+			if (chunkText) {
+				fullText += chunkText
+				onToken(chunkText)
+			}
+		}
+
+		onComplete(fullText)
+		console.log('Real streaming completed, full text length:', fullText.length)
 
 	} catch (error) {
 		console.error('Gemini streaming error:', error)
-		onError(error instanceof Error ? error : new Error(String(error)))
+
+		let errorMessage = 'Error streaming from Gemini.'
+		if (error instanceof Error) {
+			errorMessage += ` ${error.message}`
+		}
+
+		// Check for specific Gemini API error structure
+		if (error && typeof error === 'object' && 'message' in error) {
+			const gError = error as any
+			if (gError.message) {
+				errorMessage = `Gemini API Error: ${gError.message}`
+				if (gError.message.includes('API key not valid')) {
+					errorMessage += ' Please check your API key in settings.'
+				}
+			}
+		}
+
+		onError(new Error(errorMessage))
 	}
 }
