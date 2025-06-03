@@ -2169,10 +2169,13 @@ export function noteGenerator(
 		onComplete: (fullText: string) => void,
 		onError: (error: Error) => void
 	): Promise<void> => {
+		console.log('callAIStreaming called') // New log
 		const provider = getProviderFromModel(settings.apiModel)
 		const apiKey = provider === 'OpenAI' ? settings.openaiApiKey : settings.geminiApiKey
+		console.log('callAIStreaming: provider detected as:', provider, 'apiModel:', settings.apiModel) // New log
 
 		if (provider === 'Gemini') {
+			console.log('callAIStreaming: calling getGeminiStreamingCompletion') // New log
 			return await getGeminiStreamingCompletion(
 				apiKey,
 				settings.apiModel,
@@ -2214,30 +2217,47 @@ export function noteGenerator(
 	}
 
 	const generateNote = async () => {
-		if (!canCallAI()) return
+		console.log('generateNote called') // Existing log
+		if (!canCallAI()) {
+			console.log('generateNote: canCallAI returned false, exiting early')
+			return
+		}
 
 		logDebug('Creating AI note')
+		console.log('generateNote: canCallAI passed, proceeding') // New log
 
 		const canvas = getActiveCanvas()
 		if (!canvas) {
+			console.log('generateNote: no active canvas, exiting early') // New log
 			logDebug('No active canvas')
 			return
 		}
+		console.log('generateNote: canvas found, proceeding') // New log
 
 		await canvas.requestFrame()
 
 		const selection = canvas.selection
-		if (selection?.size !== 1) return // TODO: handle multiple nodes
+		if (selection?.size !== 1) {
+			console.log('generateNote: selection size is not 1, exiting early. Size:', selection?.size) // New log
+			return // TODO: handle multiple nodes
+		}
+		console.log('generateNote: selection size is 1, proceeding') // New log
+
 		const values = Array.from(selection.values())
 		const node = values[0]
 
 		if (node) {
+			console.log('generateNote: node found, proceeding') // New log
 			// Last typed characters might not be applied to note yet
 			await canvas.requestSave()
 			await sleep(200)
 
 			const { messages, tokenCount } = await buildMessages(node)
-			if (!messages.length) return
+			if (!messages.length) {
+				console.log('generateNote: no messages built, exiting early') // New log
+				return
+			}
+			console.log('generateNote: messages built, count:', messages.length, 'tokens:', tokenCount) // New log
 
 			const created = createNode(
 				canvas,
@@ -2251,6 +2271,7 @@ export function noteGenerator(
 					chat_role: 'assistant'
 				}
 			)
+			console.log('generateNote: placeholder node created') // New log
 
 			new Notice(
 				`Sending ${messages.length} notes with ${tokenCount} tokens to AI`
@@ -2259,91 +2280,31 @@ export function noteGenerator(
 			try {
 				logDebug('messages', messages)
 
-				// Use streaming if enabled
-				if (settings.enableStreaming) {
-					const streamingHandler = new StreamingHandler(
-						canvas,
-						node,
-						created,
-						settings,
-						logDebug
-					)
+				// Always use streaming
+				console.log('generateNote: using streaming mode (always enabled)') // New log
+				const streamingHandler = new StreamingHandler(
+					canvas,
+					node,
+					created,
+					settings,
+					logDebug
+				)
 
-					new Notice(`Streaming ${settings.apiModel} response...`)
+				new Notice(`Streaming ${settings.apiModel} response...`)
+				console.log('generateNote: about to call callAIStreaming') // New log
 
-					await callAIStreaming(
-						messages,
-						streamingHandler.onToken,
-						streamingHandler.onComplete,
-						streamingHandler.onError
-					)
+				await callAIStreaming(
+					messages,
+					streamingHandler.onToken,
+					streamingHandler.onComplete,
+					streamingHandler.onError
+				)
 
-					// StreamingHandler manages the final state, so we can return here
-					await canvas.requestSave()
-					return
-				}
+				// StreamingHandler manages the final state, so we can return here
+				await canvas.requestSave()
+				return
 
-				// Fallback to non-streaming mode
-				const generated = await callAI(messages)
-
-				if (generated == null) {
-					new Notice(`Empty or unreadable response from AI`)
-					canvas.removeNode(created)
-					return
-				}
-
-				// Check if auto-split is enabled and response is long enough to split
-				if (settings.enableAutoSplit && generated.length > 200) {
-					const sections = splitIntoSections(generated, settings.maxSplitNotes || 0)
-
-					if (sections.length > 1) {
-						logDebug(`Auto-splitting response into ${sections.length} sections`)
-
-						// Remove the placeholder node since we'll create multiple nodes
-						canvas.removeNode(created)
-
-						// Create mindmap nodes using the original user question as root
-						const mindmapNodes = await createMindmapNodes(canvas, node, sections, logDebug, settings)
-
-						new Notice(`Created mindmap with ${mindmapNodes.length} notes`)
-
-						// Select the original user question node
-						const selectedNoteId =
-							canvas.selection?.size === 1
-								? Array.from(canvas.selection.values())?.[0]?.id
-								: undefined
-
-						if (selectedNoteId === node?.id || selectedNoteId == null) {
-							canvas.selectOnly(node, false /* startEditing */)
-						}
-
-						await canvas.requestSave()
-						return
-					}
-				}
-
-				// Fallback to original single-node behavior
-				created.setText(generated)
-				const height = calcHeight({
-					text: generated,
-					parentHeight: node.height
-				})
-				created.moveAndResize({
-					height,
-					width: created.width,
-					x: created.x,
-					y: created.y
-				})
-
-				const selectedNoteId =
-					canvas.selection?.size === 1
-						? Array.from(canvas.selection.values())?.[0]?.id
-						: undefined
-
-				if (selectedNoteId === node?.id || selectedNoteId == null) {
-					// If the user has not changed selection, select the created node
-					canvas.selectOnly(created, false /* startEditing */)
-				}
+				// Note: Removed fallback to non-streaming mode since streaming is now always enabled
 			} catch (error) {
 				new Notice(`Error calling AI: ${error.message || error}`)
 				canvas.removeNode(created)

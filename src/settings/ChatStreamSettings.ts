@@ -178,7 +178,7 @@ export const DEFAULT_SETTINGS: ChatStreamSettings = {
 	enableMindmapColorCoding: false,
 	mindmapSpacing: 'normal',
 	mindmapLayoutAlgorithm: 'organic',
-	enableStreaming: false,
+	enableStreaming: true,
 	enableStreamingSplit: false,
 	streamingUpdateInterval: 500,
 	streamingChunkSize: 100,

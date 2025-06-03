@@ -162,10 +162,12 @@ export async function getGeminiStreamingCompletion(
 	settings?: Partial<GeminiRequest['generationConfig']>
 ): Promise<void> {
 	try {
+		console.log('getGeminiStreamingCompletion called')
 		console.debug('Calling Gemini streaming (simulated)', { model, messagesCount: messages.length })
 
 		// First get the complete response
 		const fullText = await getGeminiCompletion(apiKey, model, messages, settings)
+		console.log('fullText:', fullText)
 
 		if (!fullText) {
 			onError(new Error('No response from Gemini API'))
@@ -173,8 +175,8 @@ export async function getGeminiStreamingCompletion(
 		}
 
 		// Simulate streaming by delivering the text in chunks
-		const chunkSize = 5 // Characters per chunk
-		const delay = 50 // Milliseconds between chunks
+		const chunkSize = 1 // Characters per chunk
+		const delay = 20 // Milliseconds between chunks
 
 		let currentIndex = 0
 
@@ -185,8 +187,10 @@ export async function getGeminiStreamingCompletion(
 			}
 
 			const chunk = fullText.slice(currentIndex, currentIndex + chunkSize)
+			console.log('Processing chunk:', chunk)
 			currentIndex += chunkSize
 
+			console.log('Calling onToken with chunk:', chunk)
 			onToken(chunk)
 			setTimeout(streamChunk, delay)
 		}

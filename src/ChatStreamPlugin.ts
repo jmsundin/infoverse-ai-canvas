@@ -20,6 +20,7 @@ export class ChatStreamPlugin extends Plugin {
 	}
 
 	async onload() {
+		console.log('ChatStreamPlugin: onload started')
 		await this.loadSettings()
 
 		this.logDebug = this.settings.debug
@@ -28,8 +29,10 @@ export class ChatStreamPlugin extends Plugin {
 			: () => { }
 
 		this.logDebug('Debug logging enabled')
+		console.log('ChatStreamPlugin: logDebug initialized, settings loaded', this.settings)
 
 		const generator = noteGenerator(this.app, this.settings, this.logDebug)
+		console.log('ChatStreamPlugin: noteGenerator initialized')
 
 		this.addSettingTab(new SettingsTab(this.app, this))
 
@@ -51,6 +54,7 @@ export class ChatStreamPlugin extends Plugin {
 			id: 'generate-note',
 			name: 'Generate AI note',
 			callback: () => {
+				console.log('ChatStreamPlugin: generate-note command callback triggered')
 				generator.generateNote()
 			},
 			hotkeys: [
@@ -74,6 +78,7 @@ export class ChatStreamPlugin extends Plugin {
 				}
 			]
 		})
+		console.log('ChatStreamPlugin: commands added')
 	}
 
 	async loadSettings() {
