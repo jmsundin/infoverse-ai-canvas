@@ -1558,13 +1558,22 @@ class StreamingHandler {
 		this.createdNodes = [initialNode]
 		this.startTime = Date.now()
 
-		// Create progress indicator if enabled
+		// Initialize progress tracking if enabled
 		if (this.settings.showStreamingProgress) {
 			this.createProgressIndicator()
 		}
 
-		// Create streaming control buttons if enabled
-		this.createStreamingControls()
+		// Initialize streaming controls if enabled
+		if (this.settings.enableStreamingControls) {
+			this.createStreamingControls()
+		}
+	}
+
+	/**
+	 * Get current text for external access
+	 */
+	getCurrentText(): string {
+		return this.currentText
 	}
 
 	/**
@@ -1664,7 +1673,7 @@ class StreamingHandler {
 		this.isCompleted = true
 		this.currentText = fullText
 
-		// Final update
+		// Final update to remove streaming indicator
 		this.updateCurrentNode()
 		this.updateProgress()
 
@@ -1717,9 +1726,14 @@ class StreamingHandler {
 
 		// Final error after all retries
 		this.isCompleted = true
+
+		// Update the node to remove streaming indicator and show error
 		if (this.currentNode) {
 			this.currentNode.setText(`❌ Streaming failed after ${this.retryCount} retries: ${error.message}`)
 		}
+
+		// Update progress indicator
+		this.updateProgress()
 
 		// Clean up progress indicator
 		if (this.progressNode) {
@@ -1750,9 +1764,9 @@ class StreamingHandler {
 	 * Update the current node with latest text
 	 */
 	private updateCurrentNode() {
-		if (!this.currentNode || this.isCompleted) return
+		if (!this.currentNode) return
 
-		// Update text with streaming indicator
+		// Update text with streaming indicator only when not completed
 		const displayText = this.isCompleted ? this.currentText : `${this.currentText}●`
 		this.currentNode.setText(displayText)
 
@@ -1942,28 +1956,37 @@ class StreamingHandler {
 	}
 
 	/**
+	 * Force completion if streaming gets stuck
+	 */
+	forceCompletion(reason = 'Force completion'): void {
+		if (!this.isCompleted) {
+			console.warn(`StreamingHandler: ${reason}`)
+			this.onComplete(this.currentText || '')
+		}
+	}
+
+	/**
 	 * Stop streaming completely
 	 */
 	stop() {
 		this.isCompleted = true
 		this.isPaused = false
 
-		if (this.currentNode) {
-			this.currentNode.setText(this.currentText + '\n\n⏹️ Streaming stopped by user')
-		}
+		// Update final state
+		this.updateCurrentNode()
+		this.updateProgress()
 
-		// Clean up control and progress nodes
+		// Clean up control nodes immediately
 		if (this.controlNode) {
 			this.canvas.removeNode(this.controlNode)
 			this.controlNode = null
 		}
 
+		// Clean up progress indicator immediately
 		if (this.progressNode) {
 			this.canvas.removeNode(this.progressNode)
 			this.progressNode = null
 		}
-
-		this.logDebug('Streaming stopped by user')
 	}
 }
 
@@ -2292,6 +2315,38 @@ export function noteGenerator(
 
 				new Notice(`Streaming ${settings.apiModel} response...`)
 				console.log('generateNote: about to call callAIStreaming') // New log
+
+				// Add timeout fallback to ensure completion is always called
+				let isStreamingCompleted = false
+				const maxStreamingTimeout = (settings.streamingTimeout || 30000) + 10000 // Add 10s buffer
+
+				const timeoutId = setTimeout(() => {
+					if (!isStreamingCompleted) {
+						console.warn('Streaming timeout reached, forcing completion')
+						streamingHandler.onComplete(streamingHandler.getCurrentText() || 'Streaming timed out')
+						isStreamingCompleted = true
+					}
+				}, maxStreamingTimeout)
+
+				// Wrap the onComplete callback to ensure cleanup
+				const originalOnComplete = streamingHandler.onComplete
+				streamingHandler.onComplete = (fullText: string) => {
+					if (!isStreamingCompleted) {
+						isStreamingCompleted = true
+						clearTimeout(timeoutId)
+						originalOnComplete(fullText)
+					}
+				}
+
+				// Wrap the onError callback to ensure cleanup
+				const originalOnError = streamingHandler.onError
+				streamingHandler.onError = (error: Error) => {
+					if (!isStreamingCompleted) {
+						isStreamingCompleted = true
+						clearTimeout(timeoutId)
+						originalOnError(error)
+					}
+				}
 
 				await callAIStreaming(
 					messages,

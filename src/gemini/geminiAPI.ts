@@ -1,5 +1,5 @@
 import { request, RequestUrlParam } from 'obsidian'
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, FinishReason } from '@google/generative-ai'
 
 export const GEMINI_COMPLETIONS_URL = `https://generativelanguage.googleapis.com/v1beta/models`
 
@@ -79,7 +79,7 @@ export const defaultGeminiSettings = {
 	temperature: 0.7,
 	topP: 0.8,
 	topK: 10,
-	maxOutputTokens: 2048
+	maxOutputTokens: 8192
 }
 
 // Convert OpenAI-style messages to Gemini format
@@ -215,14 +215,45 @@ export async function getGeminiStreamingCompletion(
 		const streamingResult = await geminiModel.generateContentStream([prompt])
 
 		let fullText = ''
+		let isComplete = false
+
 		for await (const chunk of streamingResult.stream) {
-			const chunkText = chunk.text()
-			if (chunkText) {
-				fullText += chunkText
-				onToken(chunkText)
+			try {
+				// Process the text content if available
+				const chunkText = chunk.text()
+				if (chunkText) {
+					fullText += chunkText
+					onToken(chunkText)
+				}
+
+				// Check for completion indicators for logging purposes
+				const candidate = chunk.candidates?.[0]
+				if (candidate?.finishReason) {
+					const finishReason = candidate.finishReason
+					console.debug('Gemini streaming chunk with finish reason:', finishReason)
+
+					if (finishReason !== FinishReason.STOP) {
+						console.warn('Gemini streaming finished with reason:', finishReason)
+						if (finishReason === FinishReason.SAFETY) {
+							console.warn('Content was blocked due to safety concerns')
+						} else if (finishReason === FinishReason.RECITATION) {
+							console.warn('Content was blocked due to recitation concerns')
+						} else if (finishReason === FinishReason.MAX_TOKENS) {
+							console.warn('Content was truncated due to length limits')
+						}
+					}
+
+					// Mark completion but don't break - let stream end naturally
+					isComplete = true
+				}
+			} catch (chunkError) {
+				console.warn('Error processing chunk:', chunkError)
+				// Continue processing other chunks
 			}
 		}
 
+		// Log completion status
+		console.log('Gemini streaming completed naturally, completion status:', isComplete ? 'finished with reason' : 'natural end')
 		onComplete(fullText)
 		console.log('Real streaming completed, full text length:', fullText.length)
 
@@ -241,6 +272,10 @@ export async function getGeminiStreamingCompletion(
 				errorMessage = `Gemini API Error: ${gError.message}`
 				if (gError.message.includes('API key not valid')) {
 					errorMessage += ' Please check your API key in settings.'
+				} else if (gError.message.includes('RECITATION')) {
+					errorMessage += ' Content was blocked due to recitation. Try rephrasing your prompt.'
+				} else if (gError.message.includes('SAFETY')) {
+					errorMessage += ' Content was blocked by safety filters. Try rephrasing your prompt.'
 				}
 			}
 		}
