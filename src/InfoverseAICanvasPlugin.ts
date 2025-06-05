@@ -41,22 +41,22 @@ export class InfoverseAICanvasPlugin extends Plugin {
 		// Setup canvas tooltip actions
 		const tooltipActions: TooltipAction[] = [
 			{
+				id: 'single-response',
+				icon: 'message-square',
+				tooltip: 'Generate single AI response',
+				action: (node: CanvasNode) => generator.generateSingleAIResponse()
+			},
+			{
 				id: 'hierarchical-mindmap',
 				icon: 'git-branch',
-				tooltip: 'Create hierarchical mindmap',
+				tooltip: 'Generate a tree mindmap',
 				action: (node: CanvasNode) => generator.generateHierarchicalMindmap()
 			},
 			{
 				id: 'radial-mindmap',
 				icon: 'circle-dot',
-				tooltip: 'Create radial mindmap',
+				tooltip: 'Generate a radial mindmap',
 				action: (node: CanvasNode) => generator.generateRadialMindmap()
-			},
-			{
-				id: 'single-response',
-				icon: 'message-square',
-				tooltip: 'Generate single AI response',
-				action: (node: CanvasNode) => generator.generateSingleAIResponse()
 			}
 		]
 

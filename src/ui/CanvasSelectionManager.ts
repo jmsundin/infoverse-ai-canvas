@@ -7,8 +7,16 @@ export class CanvasSelectionManager {
 	private currentCanvas: Canvas | null = null
 	private selectionChangeHandler: () => void
 	private clickOutsideHandler: (event: MouseEvent) => void
+	private mouseDownHandler: (event: MouseEvent) => void
+	private mouseMoveHandler: (event: MouseEvent) => void
+	private mouseUpHandler: (event: MouseEvent) => void
 	private isDestroyed = false
 	private hideTooltipTimeout: NodeJS.Timeout | null = null
+	private isDragging = false
+	private monitoredNode: CanvasNode | null = null
+	private lastNodePosition: { x: number; y: number } | null = null
+	private positionCheckInterval: NodeJS.Timeout | null = null
+	private stablePositionTimeout: NodeJS.Timeout | null = null
 
 	constructor(
 		private canvasView: CanvasView,
@@ -16,6 +24,9 @@ export class CanvasSelectionManager {
 	) {
 		this.selectionChangeHandler = this.handleSelectionChange.bind(this)
 		this.clickOutsideHandler = this.handleClickOutside.bind(this)
+		this.mouseDownHandler = this.handleMouseDown.bind(this)
+		this.mouseMoveHandler = this.handleMouseMove.bind(this)
+		this.mouseUpHandler = this.handleMouseUp.bind(this)
 		this.initialize()
 	}
 
@@ -51,8 +62,11 @@ export class CanvasSelectionManager {
 		// Since we don't have direct access to selection events, we'll poll
 		this.monitorSelectionChanges()
 
-		// Add click outside handler
+		// Add event listeners
 		document.addEventListener('click', this.clickOutsideHandler, true)
+		document.addEventListener('mousedown', this.mouseDownHandler, true)
+		document.addEventListener('mousemove', this.mouseMoveHandler, true)
+		document.addEventListener('mouseup', this.mouseUpHandler, true)
 	}
 
 	private async monitorSelectionChanges() {
@@ -92,36 +106,16 @@ export class CanvasSelectionManager {
 				}
 
 				if (currentSize === 1 && selectedNode) {
-					// Single node selected - show tooltip
-					console.debug('CanvasSelectionManager: Showing tooltip for node', selectedNode.id)
-					this.showTooltipForNode(selectedNode)
+					// Single node selected - start monitoring its position
+					console.debug('CanvasSelectionManager: Starting position monitoring for node', selectedNode.id)
+					this.startPositionMonitoring(selectedNode)
 					lastSelectedNodeId = selectedNode.id
 				} else {
-					// No selection or multiple selection - schedule hide with delay
-					console.debug('CanvasSelectionManager: Scheduling tooltip hide', {
-						selectionSize: currentSize,
-						reason: currentSize === 0 ? 'no selection' : 'multiple selection'
-					})
-
-					// Use delay that matches native Obsidian tooltip timing
-					const hideDelay = 0 // 200ms (0.2s) - matches native Obsidian tooltips
-
-					this.hideTooltipTimeout = setTimeout(() => {
-						console.debug('CanvasSelectionManager: Executing scheduled hide')
-
-						// Final check before hiding
-						const finalSelection = this.currentCanvas?.selection
-						const finalSize = finalSelection?.size || 0
-
-						if (finalSize !== 1) {
-							console.debug('CanvasSelectionManager: Hiding tooltip')
-							this.hideTooltip()
-							lastSelectedNodeId = null
-						} else {
-							console.debug('CanvasSelectionManager: Cancelled hide - selection is active')
-						}
-						this.hideTooltipTimeout = null
-					}, hideDelay)
+					// No selection or multiple selection - stop monitoring and hide tooltip
+					console.debug('CanvasSelectionManager: No single selection, stopping position monitoring')
+					this.stopPositionMonitoring()
+					this.hideTooltip()
+					lastSelectedNodeId = null
 				}
 				lastSelectionSize = currentSize
 			}
@@ -201,6 +195,107 @@ export class CanvasSelectionManager {
 		this.hideTooltip()
 	}
 
+	private handleMouseDown(event: MouseEvent) {
+		// Mouse events are no longer used for drag detection
+		// Position monitoring handles everything automatically
+	}
+
+	private handleMouseMove(event: MouseEvent) {
+		// Mouse events are no longer used for drag detection
+		// Position monitoring handles everything automatically
+	}
+
+	private handleMouseUp(event: MouseEvent) {
+		// Mouse events are no longer used for drag detection
+		// Position monitoring handles everything automatically
+	}
+
+	private startPositionMonitoring(node: CanvasNode) {
+		// Stop any existing monitoring
+		this.stopPositionMonitoring()
+
+		this.monitoredNode = node
+		this.lastNodePosition = { x: node.x, y: node.y }
+		this.isDragging = false
+
+		console.debug('CanvasSelectionManager: Starting position monitoring for node', node.id)
+
+		// Show tooltip initially if not dragging
+		this.showTooltipForNode(node)
+
+		// Check position changes every 16ms (60fps)
+		this.positionCheckInterval = setInterval(() => {
+			if (!this.monitoredNode || this.isDestroyed) {
+				this.stopPositionMonitoring()
+				return
+			}
+
+			const currentPos = { x: this.monitoredNode.x, y: this.monitoredNode.y }
+
+			if (this.lastNodePosition) {
+				const deltaX = Math.abs(currentPos.x - this.lastNodePosition.x)
+				const deltaY = Math.abs(currentPos.y - this.lastNodePosition.y)
+				const hasPositionChanged = deltaX > 0.1 || deltaY > 0.1
+
+				if (hasPositionChanged) {
+					// Position changed - hide tooltip and mark as dragging
+					if (!this.isDragging) {
+						this.isDragging = true
+						console.debug('CanvasSelectionManager: Node position changed, hiding tooltip')
+						this.hideTooltip()
+					}
+
+					// Clear any existing stable position timeout
+					if (this.stablePositionTimeout) {
+						clearTimeout(this.stablePositionTimeout)
+						this.stablePositionTimeout = null
+					}
+
+					// Update last position
+					this.lastNodePosition = { ...currentPos }
+				} else if (this.isDragging) {
+					// Position hasn't changed and we were dragging
+					// Set timeout to show tooltip after position stabilizes
+					if (!this.stablePositionTimeout) {
+						this.stablePositionTimeout = setTimeout(() => {
+							if (this.monitoredNode && this.isDragging) {
+								console.debug('CanvasSelectionManager: Position stabilized, showing tooltip')
+								this.isDragging = false
+
+								// Check if node is still selected before showing tooltip
+								if (this.currentCanvas?.selection.size === 1) {
+									const selectedNode = Array.from(this.currentCanvas.selection)[0]
+									if (selectedNode === this.monitoredNode) {
+										this.showTooltipForNode(selectedNode)
+									}
+								}
+							}
+							this.stablePositionTimeout = null
+						}, 150) // Wait 150ms for position to be stable before showing tooltip
+					}
+				}
+			}
+		}, 16)
+	}
+
+	private stopPositionMonitoring() {
+		if (this.positionCheckInterval) {
+			clearInterval(this.positionCheckInterval)
+			this.positionCheckInterval = null
+		}
+
+		if (this.stablePositionTimeout) {
+			clearTimeout(this.stablePositionTimeout)
+			this.stablePositionTimeout = null
+		}
+
+		this.monitoredNode = null
+		this.lastNodePosition = null
+		this.isDragging = false
+
+		console.debug('CanvasSelectionManager: Stopped position monitoring')
+	}
+
 	updateActions(actions: TooltipAction[]) {
 		this.actions = actions
 		if (this.tooltip) {
@@ -219,6 +314,12 @@ export class CanvasSelectionManager {
 
 		// Remove event listeners
 		document.removeEventListener('click', this.clickOutsideHandler, true)
+		document.removeEventListener('mousedown', this.mouseDownHandler, true)
+		document.removeEventListener('mousemove', this.mouseMoveHandler, true)
+		document.removeEventListener('mouseup', this.mouseUpHandler, true)
+
+		// Stop position monitoring and reset state
+		this.stopPositionMonitoring()
 
 		// Destroy tooltip
 		if (this.tooltip) {
