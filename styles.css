@@ -287,3 +287,133 @@ If your plugin does not need CSS, delete this file.
    }
  }
       */
+
+/* Canvas Node Tooltip Styles */
+.canvas-node-tooltip {
+	position: absolute;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 4px;
+	z-index: 1000;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+	backdrop-filter: blur(8px);
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	opacity: 0;
+	transform: translateY(10px);
+	transition: all 0.2s ease;
+	pointer-events: auto;
+}
+
+.canvas-node-tooltip.visible {
+	opacity: 1;
+	transform: translateY(0);
+}
+
+.canvas-tooltip-button {
+	background: transparent;
+	border: none;
+	padding: 8px;
+	border-radius: 6px;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-muted);
+	transition: all 0.15s ease;
+	width: 32px;
+	height: 32px;
+	position: relative;
+}
+
+.canvas-tooltip-button:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+	transform: scale(1.05);
+}
+
+.canvas-tooltip-button:active {
+	transform: scale(0.95);
+}
+
+.canvas-tooltip-button svg {
+	width: 16px;
+	height: 16px;
+}
+
+/* Tooltip arrow (optional enhancement) */
+.canvas-node-tooltip::before {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: -6px;
+	transform: translateY(-50%);
+	width: 0;
+	height: 0;
+	border-style: solid;
+	border-width: 6px 6px 6px 0;
+	border-color: transparent var(--background-modifier-border) transparent
+		transparent;
+}
+
+.canvas-node-tooltip::after {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: -5px;
+	transform: translateY(-50%);
+	width: 0;
+	height: 0;
+	border-style: solid;
+	border-width: 5px 5px 5px 0;
+	border-color: transparent var(--background-primary) transparent transparent;
+}
+
+/* Dark theme adjustments */
+.theme-dark .canvas-node-tooltip {
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+	.canvas-node-tooltip {
+		border-width: 2px;
+	}
+
+	.canvas-tooltip-button {
+		border: 1px solid var(--background-modifier-border);
+	}
+}
+
+/* Smooth animations for better UX */
+@keyframes tooltipFadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(10px) scale(0.95);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes tooltipFadeOut {
+	from {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: translateY(10px) scale(0.95);
+	}
+}
+
+.canvas-node-tooltip.animate-in {
+	animation: tooltipFadeIn 0.2s ease-out forwards;
+}
+
+.canvas-node-tooltip.animate-out {
+	animation: tooltipFadeOut 0.2s ease-in forwards;
+}

@@ -3,166 +3,229 @@ import { CanvasView } from '../obsidian/canvas-patches'
 import { CanvasTooltip, TooltipAction } from './CanvasTooltip'
 
 export class CanvasSelectionManager {
-    private tooltip: CanvasTooltip | null = null
-    private currentCanvas: Canvas | null = null
-    private selectionChangeHandler: () => void
-    private clickOutsideHandler: (event: MouseEvent) => void
-    private isDestroyed = false
+	private tooltip: CanvasTooltip | null = null
+	private currentCanvas: Canvas | null = null
+	private selectionChangeHandler: () => void
+	private clickOutsideHandler: (event: MouseEvent) => void
+	private isDestroyed = false
+	private hideTooltipTimeout: NodeJS.Timeout | null = null
 
-    constructor(
-        private canvasView: CanvasView,
-        private actions: TooltipAction[]
-    ) {
-        this.selectionChangeHandler = this.handleSelectionChange.bind(this)
-        this.clickOutsideHandler = this.handleClickOutside.bind(this)
-        this.initialize()
-    }
+	constructor(
+		private canvasView: CanvasView,
+		private actions: TooltipAction[]
+	) {
+		this.selectionChangeHandler = this.handleSelectionChange.bind(this)
+		this.clickOutsideHandler = this.handleClickOutside.bind(this)
+		this.initialize()
+	}
 
-    private initialize() {
-        if (this.isDestroyed) return
+	private initialize() {
+		if (this.isDestroyed) return
 
-        this.currentCanvas = this.canvasView.canvas
-        if (!this.currentCanvas?.wrapperEl) {
-            console.debug('CanvasSelectionManager: Canvas or wrapperEl not available')
-            return
-        }
+		this.currentCanvas = this.canvasView.canvas
+		if (!this.currentCanvas?.wrapperEl) {
+			console.debug('CanvasSelectionManager: Canvas or wrapperEl not available')
+			return
+		}
 
-        console.debug('CanvasSelectionManager: Initializing with canvas', {
-            canvas: !!this.currentCanvas,
-            wrapperEl: !!this.currentCanvas.wrapperEl,
-            actionsCount: this.actions.length
-        })
+		console.debug('CanvasSelectionManager: Initializing with canvas', {
+			canvas: !!this.currentCanvas,
+			wrapperEl: !!this.currentCanvas.wrapperEl,
+			actionsCount: this.actions.length
+		})
 
-        // Create tooltip
-        this.tooltip = new CanvasTooltip(this.currentCanvas.wrapperEl)
-        this.tooltip.setActions(this.actions)
+		// Create tooltip
+		this.tooltip = new CanvasTooltip(this.currentCanvas.wrapperEl)
+		this.tooltip.setActions(this.actions)
 
-        console.debug('CanvasSelectionManager: Tooltip created and actions set')
+		console.debug('CanvasSelectionManager: Tooltip created and actions set')
 
-        // Start monitoring selection changes
-        this.startMonitoring()
-    }
+		// Start monitoring selection changes
+		this.startMonitoring()
+	}
 
-    private startMonitoring() {
-        if (!this.currentCanvas) return
+	private startMonitoring() {
+		if (!this.currentCanvas) return
 
-        // Monitor canvas selection changes using MutationObserver
-        // Since we don't have direct access to selection events, we'll poll
-        this.monitorSelectionChanges()
+		// Monitor canvas selection changes using MutationObserver
+		// Since we don't have direct access to selection events, we'll poll
+		this.monitorSelectionChanges()
 
-        // Add click outside handler
-        document.addEventListener('click', this.clickOutsideHandler, true)
-    }
+		// Add click outside handler
+		document.addEventListener('click', this.clickOutsideHandler, true)
+	}
 
-    private async monitorSelectionChanges() {
-        let lastSelectionSize = 0
-        let lastSelectedNodeId: string | null = null
+	private async monitorSelectionChanges() {
+		let lastSelectionSize = 0
+		let lastSelectedNodeId: string | null = null
 
-        const checkSelection = () => {
-            if (this.isDestroyed || !this.currentCanvas) return
+		const checkSelection = () => {
+			if (this.isDestroyed || !this.currentCanvas) return
 
-            const selection = this.currentCanvas.selection
-            const currentSize = selection.size
+			const selection = this.currentCanvas.selection
+			const currentSize = selection.size
+			const selectedNode = currentSize === 1 ? Array.from(selection)[0] : null
 
-            // Debug logging
-            if (currentSize > 0) {
-                console.debug('CanvasSelectionManager: Selection detected', {
-                    size: currentSize,
-                    hasActions: this.actions.length > 0,
-                    tooltipExists: !!this.tooltip
-                })
-            }
+			// Simple debug logging
+			if (currentSize > 0 || lastSelectionSize > 0) {
+				console.debug('CanvasSelectionManager: Selection state', {
+					currentSize,
+					lastSelectionSize,
+					selectedNodeId: selectedNode?.id,
+					lastSelectedNodeId,
+					hasTooltip: !!this.tooltip
+				})
+			}
 
-            // If selection changed
-            if (currentSize !== lastSelectionSize) {
-                if (currentSize === 1) {
-                    // Single node selected
-                    const selectedNode = Array.from(selection)[0]
-                    if (selectedNode?.id !== lastSelectedNodeId) {
-                        console.debug('CanvasSelectionManager: Showing tooltip for node', selectedNode?.id)
-                        this.showTooltipForNode(selectedNode)
-                        lastSelectedNodeId = selectedNode?.id || null
-                    }
-                } else {
-                    // No selection or multiple selection
-                    console.debug('CanvasSelectionManager: Hiding tooltip (selection size:', currentSize, ')')
-                    this.hideTooltip()
-                    lastSelectedNodeId = null
-                }
-                lastSelectionSize = currentSize
-            }
+			// If selection changed
+			if (currentSize !== lastSelectionSize || (currentSize === 1 && selectedNode?.id !== lastSelectedNodeId)) {
+				console.debug('CanvasSelectionManager: Selection changed', {
+					from: { size: lastSelectionSize, nodeId: lastSelectedNodeId },
+					to: { size: currentSize, nodeId: selectedNode?.id }
+				})
 
-            // Continue monitoring if not destroyed
-            if (!this.isDestroyed) {
-                requestAnimationFrame(checkSelection)
-            }
-        }
+				// Clear any pending hide timeout
+				if (this.hideTooltipTimeout) {
+					console.debug('CanvasSelectionManager: Clearing pending hide timeout')
+					clearTimeout(this.hideTooltipTimeout)
+					this.hideTooltipTimeout = null
+				}
 
-        // Start the monitoring loop
-        requestAnimationFrame(checkSelection)
-    }
+				if (currentSize === 1 && selectedNode) {
+					// Single node selected - show tooltip
+					console.debug('CanvasSelectionManager: Showing tooltip for node', selectedNode.id)
+					this.showTooltipForNode(selectedNode)
+					lastSelectedNodeId = selectedNode.id
+				} else {
+					// No selection or multiple selection - schedule hide with delay
+					console.debug('CanvasSelectionManager: Scheduling tooltip hide', {
+						selectionSize: currentSize,
+						reason: currentSize === 0 ? 'no selection' : 'multiple selection'
+					})
 
-    private showTooltipForNode(node: CanvasNode) {
-        if (!this.tooltip || this.isDestroyed) return
+					// Use delay that matches native Obsidian tooltip timing
+					const hideDelay = 0 // 200ms (0.2s) - matches native Obsidian tooltips
 
-        // Small delay to ensure the node is properly rendered and positioned
-        setTimeout(() => {
-            if (!this.isDestroyed && this.tooltip) {
-                this.tooltip.show(node)
-            }
-        }, 50)
-    }
+					this.hideTooltipTimeout = setTimeout(() => {
+						console.debug('CanvasSelectionManager: Executing scheduled hide')
 
-    private hideTooltip() {
-        if (this.tooltip && !this.isDestroyed) {
-            this.tooltip.hide()
-        }
-    }
+						// Final check before hiding
+						const finalSelection = this.currentCanvas?.selection
+						const finalSize = finalSelection?.size || 0
 
-    private handleSelectionChange() {
-        // This method is kept for potential future use with proper event listeners
-        if (this.isDestroyed) return
-        // Selection change logic would go here
-    }
+						if (finalSize !== 1) {
+							console.debug('CanvasSelectionManager: Hiding tooltip')
+							this.hideTooltip()
+							lastSelectedNodeId = null
+						} else {
+							console.debug('CanvasSelectionManager: Cancelled hide - selection is active')
+						}
+						this.hideTooltipTimeout = null
+					}, hideDelay)
+				}
+				lastSelectionSize = currentSize
+			}
 
-    private handleClickOutside(event: MouseEvent) {
-        if (this.isDestroyed) return
+			// Continue monitoring if not destroyed
+			if (!this.isDestroyed) {
+				requestAnimationFrame(checkSelection)
+			}
+		}
 
-        const target = event.target as HTMLElement
+		// Start the monitoring loop
+		requestAnimationFrame(checkSelection)
+	}
 
-        // Check if click is on a tooltip button
-        if (target?.closest('.canvas-node-tooltip')) {
-            return // Don't hide tooltip if clicking on it
-        }
+	private showTooltipForNode(node: CanvasNode) {
+		if (!this.tooltip || this.isDestroyed) return
 
-        // Check if click is on a canvas node
-        if (target?.closest('.canvas-node')) {
-            return // Let normal selection handling occur
-        }
+		// Small delay to ensure the node is properly rendered and positioned
+		setTimeout(() => {
+			if (!this.isDestroyed && this.tooltip) {
+				this.tooltip.show(node)
+			}
+		}, 50)
+	}
 
-        // Click outside - hide tooltip
-        this.hideTooltip()
-    }
+	private hideTooltip() {
+		if (this.tooltip && !this.isDestroyed) {
+			this.tooltip.hide()
+		}
+	}
 
-    updateActions(actions: TooltipAction[]) {
-        this.actions = actions
-        if (this.tooltip) {
-            this.tooltip.setActions(actions)
-        }
-    }
+	private handleSelectionChange() {
+		// This method is kept for potential future use with proper event listeners
+		if (this.isDestroyed) return
+		// Selection change logic would go here
+	}
 
-    destroy() {
-        this.isDestroyed = true
+	private handleClickOutside(event: MouseEvent) {
+		if (this.isDestroyed) return
 
-        // Remove event listeners
-        document.removeEventListener('click', this.clickOutsideHandler, true)
+		const target = event.target as HTMLElement
 
-        // Destroy tooltip
-        if (this.tooltip) {
-            this.tooltip.destroy()
-            this.tooltip = null
-        }
+		console.debug('CanvasSelectionManager: Click outside handler triggered', {
+			targetTagName: target?.tagName,
+			targetClassName: target?.className,
+			targetClosest: {
+				tooltip: !!target?.closest('.canvas-node-tooltip'),
+				canvasNode: !!target?.closest('.canvas-node'),
+				nodeContent: !!target?.closest('.canvas-node-content'),
+				markdown: !!target?.closest('.cm-editor')
+			}
+		})
 
-        this.currentCanvas = null
-    }
+		// Check if click is on a tooltip button
+		if (target?.closest('.canvas-node-tooltip')) {
+			console.debug('CanvasSelectionManager: Click on tooltip, not hiding')
+			return // Don't hide tooltip if clicking on it
+		}
+
+		// Check if click is on a canvas node or its content
+		if (target?.closest('.canvas-node') || target?.closest('.canvas-node-content') || target?.closest('.cm-editor')) {
+			console.debug('CanvasSelectionManager: Click on canvas node or content, not hiding')
+			return // Let normal selection handling occur
+		}
+
+		// Check if any node is currently being edited
+		if (this.currentCanvas) {
+			const hasEditingNode = this.currentCanvas.nodes.some(node => node.isEditing)
+			if (hasEditingNode) {
+				console.debug('CanvasSelectionManager: Node is being edited, not hiding tooltip')
+				return
+			}
+		}
+
+		// Click outside - hide tooltip
+		console.debug('CanvasSelectionManager: Click outside detected, hiding tooltip')
+		this.hideTooltip()
+	}
+
+	updateActions(actions: TooltipAction[]) {
+		this.actions = actions
+		if (this.tooltip) {
+			this.tooltip.setActions(actions)
+		}
+	}
+
+	destroy() {
+		this.isDestroyed = true
+
+		// Clear any pending timeout
+		if (this.hideTooltipTimeout) {
+			clearTimeout(this.hideTooltipTimeout)
+			this.hideTooltipTimeout = null
+		}
+
+		// Remove event listeners
+		document.removeEventListener('click', this.clickOutsideHandler, true)
+
+		// Destroy tooltip
+		if (this.tooltip) {
+			this.tooltip.destroy()
+			this.tooltip = null
+		}
+
+		this.currentCanvas = null
+	}
 }

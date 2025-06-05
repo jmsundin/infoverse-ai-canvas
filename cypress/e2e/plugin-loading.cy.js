@@ -36,11 +36,11 @@ describe('Chat Stream Plugin Loading', () => {
 			const hotkeys = win.app.hotkeyManager.customKeys
 
 			// Check for registered hotkeys
-			const chatStreamHotkeys = Object.values(hotkeys).filter((hotkey) =>
+			const infoverseAICanvasHotkeys = Object.values(hotkeys).filter((hotkey) =>
 				hotkey.command?.startsWith('chat-stream:')
 			)
 
-			expect(chatStreamHotkeys.length).to.be.greaterThan(0)
+			expect(infoverseAICanvasHotkeys.length).to.be.greaterThan(0)
 		})
 	})
 

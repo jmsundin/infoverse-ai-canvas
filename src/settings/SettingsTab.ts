@@ -1,12 +1,12 @@
 import { App, PluginSettingTab, Setting } from 'obsidian'
-import { ChatStreamPlugin } from 'src/ChatStreamPlugin'
-import { getModelsByProvider } from './ChatStreamSettings'
+import { InfoverseAICanvasPlugin } from 'src/InfoverseAICanvasPlugin'
+import { getModelsByProvider } from './InfoverseAICanvasSettings'
 import { PROVIDERS } from 'src/models/providers'
 
 export class SettingsTab extends PluginSettingTab {
-	plugin: ChatStreamPlugin
+	plugin: InfoverseAICanvasPlugin
 
-	constructor(app: App, plugin: ChatStreamPlugin) {
+	constructor(app: App, plugin: InfoverseAICanvasPlugin) {
 		super(app, plugin)
 		this.plugin = plugin
 	}
@@ -253,6 +253,113 @@ export class SettingsTab extends PluginSettingTab {
 					})
 			)
 
+		containerEl.createEl('h3', { text: 'Streaming Settings' })
+
+		new Setting(containerEl)
+			.setName('Enable streaming')
+			.setDesc('Enable real-time streaming of AI responses for immediate feedback')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.enableStreaming)
+					.onChange(async (value) => {
+						this.plugin.settings.enableStreaming = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Enable streaming split')
+			.setDesc('Automatically split responses into multiple nodes while streaming (requires markdown splitting enabled)')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.enableStreamingSplit)
+					.onChange(async (value) => {
+						this.plugin.settings.enableStreamingSplit = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Update interval (ms)')
+			.setDesc('How often to update the display during streaming (lower = more responsive, higher = better performance)')
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.streamingUpdateInterval.toString())
+					.onChange(async (value) => {
+						const parsed = parseInt(value)
+						if (!isNaN(parsed) && parsed > 0) {
+							this.plugin.settings.streamingUpdateInterval = parsed
+							await this.plugin.saveSettings()
+						}
+					})
+			)
+
+		new Setting(containerEl)
+			.setName('Show streaming progress')
+			.setDesc('Display streaming progress indicators with token count and speed metrics')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.showStreamingProgress)
+					.onChange(async (value) => {
+						this.plugin.settings.showStreamingProgress = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Enable streaming controls')
+			.setDesc('Show pause/resume controls during streaming')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.enableStreamingControls)
+					.onChange(async (value) => {
+						this.plugin.settings.enableStreamingControls = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Enable streaming metrics')
+			.setDesc('Show detailed streaming performance metrics and debugging information')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.enableStreamingMetrics)
+					.onChange(async (value) => {
+						this.plugin.settings.enableStreamingMetrics = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Streaming timeout (ms)')
+			.setDesc('Maximum time to wait for streaming response (0 = no timeout)')
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.streamingTimeout.toString())
+					.onChange(async (value) => {
+						const parsed = parseInt(value)
+						if (!isNaN(parsed) && parsed >= 0) {
+							this.plugin.settings.streamingTimeout = parsed
+							await this.plugin.saveSettings()
+						}
+					})
+			)
+
+		new Setting(containerEl)
+			.setName('Retry attempts')
+			.setDesc('Number of times to retry streaming on failure')
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.streamingRetryAttempts.toString())
+					.onChange(async (value) => {
+						const parsed = parseInt(value)
+						if (!isNaN(parsed) && parsed >= 0) {
+							this.plugin.settings.streamingRetryAttempts = parsed
+							await this.plugin.saveSettings()
+						}
+					})
+			)
+
 		containerEl.createEl('h3', { text: 'Mindmap Visualization' })
 
 		new Setting(containerEl)
@@ -312,6 +419,101 @@ export class SettingsTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.mindmapLayoutAlgorithm)
 					.onChange(async (value) => {
 						this.plugin.settings.mindmapLayoutAlgorithm = value as 'radial' | 'hierarchical' | 'organic' | 'force'
+						await this.plugin.saveSettings()
+					})
+			})
+
+		containerEl.createEl('h3', { text: 'Markdown Splitting' })
+
+		new Setting(containerEl)
+			.setName('Enable markdown splitting')
+			.setDesc('Enable recursive markdown splitting for hierarchical note creation based on header levels')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.enableMarkdownSplitting)
+					.onChange(async (value) => {
+						this.plugin.settings.enableMarkdownSplitting = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Chunk size')
+			.setDesc('Maximum size of each markdown chunk in characters')
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.markdownChunkSize.toString())
+					.onChange(async (value) => {
+						const parsed = parseInt(value)
+						if (!isNaN(parsed) && parsed > 0) {
+							this.plugin.settings.markdownChunkSize = parsed
+							await this.plugin.saveSettings()
+						}
+					})
+			)
+
+		new Setting(containerEl)
+			.setName('Chunk overlap')
+			.setDesc('Number of characters to overlap between chunks for context preservation')
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.markdownChunkOverlap.toString())
+					.onChange(async (value) => {
+						const parsed = parseInt(value)
+						if (!isNaN(parsed) && parsed >= 0) {
+							this.plugin.settings.markdownChunkOverlap = parsed
+							await this.plugin.saveSettings()
+						}
+					})
+			)
+
+		new Setting(containerEl)
+			.setName('Keep header separators')
+			.setDesc('Keep markdown header separators (# ## ###) when splitting content')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.markdownKeepSeparators)
+					.onChange(async (value) => {
+						this.plugin.settings.markdownKeepSeparators = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Enable hierarchy visualization')
+			.setDesc('Auto-create parent-child relationships and edges between hierarchical notes in canvas')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.enableMarkdownHierarchy)
+					.onChange(async (value) => {
+						this.plugin.settings.enableMarkdownHierarchy = value
+						await this.plugin.saveSettings()
+					})
+			})
+
+		new Setting(containerEl)
+			.setName('Hierarchy spacing')
+			.setDesc('Horizontal spacing between hierarchy levels in canvas (pixels)')
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.markdownHierarchySpacing.toString())
+					.onChange(async (value) => {
+						const parsed = parseInt(value)
+						if (!isNaN(parsed) && parsed > 0) {
+							this.plugin.settings.markdownHierarchySpacing = parsed
+							await this.plugin.saveSettings()
+						}
+					})
+			)
+
+		new Setting(containerEl)
+			.setName('Show tree visualization')
+			.setDesc('Display a tree structure visualization when splitting markdown')
+			.addToggle((component) => {
+				component
+					.setValue(this.plugin.settings.showMarkdownTreeVisualization)
+					.onChange(async (value) => {
+						this.plugin.settings.showMarkdownTreeVisualization = value
 						await this.plugin.saveSettings()
 					})
 			})

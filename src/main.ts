@@ -1,3 +1,3 @@
-import { ChatStreamPlugin } from './ChatStreamPlugin'
+import { InfoverseAICanvasPlugin } from './InfoverseAICanvasPlugin'
 
-export default ChatStreamPlugin
+export default InfoverseAICanvasPlugin

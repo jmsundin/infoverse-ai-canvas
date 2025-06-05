@@ -112,21 +112,40 @@ Stream chat with AI models in Obsidian Canvas, with support for both OpenAI and 
 
 ## Features
 
-- **Multiple AI Providers**: Support for OpenAI (GPT models) and Google Gemini models
-- **Model Selection**: Choose from various models including:
-  - OpenAI: GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, etc.
-  - Google Gemini: Gemini 1.5 Pro, Gemini 1.5 Flash, **Gemini 2.5 Flash**, **Gemini 2.5 Pro** (NEW!)
-- **Canvas Integration**: Create AI conversations directly in Obsidian Canvas
-- **Smart Mindmaps**: Automatically generate visually organized mindmap responses
-  - Enhanced visual layout with cross/diamond patterns for small mindmaps
-  - Radial layouts for larger mindmaps with better spacing
-  - Color-coded content types (code, lists, highlights)
-  - Customizable themes and spacing options
-- **System Prompts**: Define custom system prompts for specialized AI behavior
-- **Context Awareness**: AI can read and respond to parent notes in the canvas
-- **Auto-splitting**: Automatically break long responses into organized, connected notes
-- **Streaming Response**: Real-time response generation
-- **Token Management**: Configurable input/output token limits and depth control
+This plugin enables AI-powered canvas note creation with advanced mindmap capabilities and an intuitive tooltip interface:
+
+### Core Features
+
+- **Canvas Note Generation**: Create AI responses as connected notes on Obsidian Canvas
+- **Streaming Responses**: Real-time AI response streaming with live updates
+- **Hierarchical Mindmaps**: Automatically split AI responses into structured hierarchical notes
+- **Conversation Context**: Build conversational threads by connecting related notes
+- **Multiple AI Providers**: Support for OpenAI GPT models and Google Gemini
+
+### Interactive Tooltip Interface
+
+When you select a note on the canvas, a tooltip appears in the upper right corner with three icon buttons:
+
+- **🌳 Hierarchical Mindmap** (`git-branch` icon): Creates a hierarchical tree structure from the selected note using headers and subheaders
+- **⭕ Radial Mindmap** (`circle-dot` icon): Generates a radial layout with multiple topic branches extending from the central concept
+- **💬 Single AI Response** (`message-square` icon): Creates a focused AI response without chunking or splitting
+
+### Advanced Features
+
+- **Header-Based Splitting**: Automatically parse markdown headers to create structured note hierarchies
+- **Markdown Processing**: Intelligent content splitting with configurable chunk sizes and overlap
+- **Live Tree Visualization**: Real-time display of hierarchical structures as content streams
+- **Custom System Prompts**: Define conversation context and AI behavior
+- **Token Management**: Monitor and control token usage for cost optimization
+
+## Keyboard Shortcuts
+
+- **Generate AI note** (`Alt+Shift+G`): Generate AI response based on conversation context
+- **Generate AI mindmap** (`Alt+Shift+M`): Create mindmap-style AI responses
+- **Split markdown into hierarchical notes** (`Alt+Shift+S`): Transform markdown into hierarchical structures
+- **Generate hierarchical mindmap** (`Alt+Shift+H`): Create structured hierarchical mindmap
+- **Generate radial mindmap** (`Alt+Shift+R`): Create radial layout mindmap
+- **Generate single AI response** (`Alt+Shift+A`): Create focused single-note response
 
 ## Latest Updates
 
@@ -187,3 +206,92 @@ Different content types are positioned at specific angles:
 - **Steps/Lists**: 180° - 225° (bottom-left)
 - **Examples**: 270° (bottom)
 - **Important/Summary**: 315° - 360° (top-left)
+
+## New: Langchain Recursive Markdown Splitter
+
+Transform your AI responses and markdown documents into hierarchical, interconnected knowledge structures:
+
+#### How It Works
+
+The plugin uses Langchain's RecursiveCharacterTextSplitter to intelligently split markdown content based on header hierarchy:
+
+```
+# Header 1 - Root
+## Header 2 - Child1, child of Root
+### Header 3 - Child2, child of Child1
+#### Header 4 - Child3, child of Child2
+##### Header 5 - Child4, child of Child3
+###### Header 6 - Child5, child of Child4
+```
+
+#### Features
+
+- **Smart Chunking**: Respects header boundaries and maintains context
+- **Visual Hierarchy**: Creates parent-child relationships with directed edges
+- **Configurable Settings**: Customize chunk size, overlap, and spacing
+- **Tree Visualization**: Optional structure overview display
+- **Canvas Integration**: Automatically positions nodes based on hierarchy level
+
+#### Usage
+
+1. **Enable in Settings**: Go to plugin settings → Markdown Splitting section
+2. **Prepare Content**: Create or select a note with markdown headers
+3. **Split Content**: Use command "Split markdown into hierarchical notes" or `Alt+Shift+S`
+4. **Explore Structure**: Navigate the generated hierarchical note structure
+
+#### Configuration Options
+
+- **Chunk Size**: Maximum characters per chunk (default: 1000)
+- **Chunk Overlap**: Characters to overlap for context (default: 200)
+- **Keep Separators**: Preserve header markers (default: true)
+- **Hierarchy Spacing**: Horizontal spacing between levels (default: 300px)
+- **Enable Hierarchy**: Create parent-child edges (default: true)
+- **Show Tree Visualization**: Display structure overview (default: true)
+
+## Installation
+
+This plugin is not yet available in the Obsidian Community Plugins directory. To install:
+
+1. Download the latest release
+2. Extract to your `.obsidian/plugins/` directory
+3. Enable the plugin in Obsidian settings
+
+## Commands
+
+- **Create next note** (`Alt+Shift+N`): Create a new note connected to the current selection
+- **Generate AI note** (`Alt+Shift+G`): Generate AI response based on conversation context
+- **Generate AI mindmap** (`Alt+Shift+M`): Create mindmap-style AI responses
+- **Split markdown into hierarchical notes** (`Alt+Shift+S`): Transform markdown into hierarchical structures
+
+## Setup
+
+1. Install the plugin
+2. Configure your API keys in plugin settings:
+   - OpenAI API key for GPT models
+   - Google Gemini API key for Gemini models
+3. Choose your preferred AI model and provider
+4. Configure markdown splitting settings if desired
+5. Start creating AI-powered canvas notes!
+
+## AI Providers Supported
+
+- **OpenAI**: GPT-3.5, GPT-4, and other chat completion models
+- **Google Gemini**: Gemini Pro and other Gemini models
+
+## Requirements
+
+- Obsidian v1.4.11 or higher
+- Valid API key for your chosen AI provider
+- Canvas plugin enabled in Obsidian
+
+## License
+
+MIT License - see LICENSE file for details.
+
+## Contributing
+
+Contributions welcome! Please read the contributing guidelines and submit pull requests for any improvements.
+
+---
+
+**Note**: This plugin uses internal Obsidian Canvas APIs that may change without notice. The plugin is designed to work with the current version of Obsidian but may require updates for future versions.
