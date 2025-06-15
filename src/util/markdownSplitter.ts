@@ -1,4 +1,4 @@
-import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter'
+// Removed dependency on LangChain's RecursiveCharacterTextSplitter in favor of an internal header-aware splitter implementation
 
 /**
  * Represents a markdown node with hierarchical information
@@ -51,45 +51,39 @@ const DEFAULT_CONFIG: Required<MarkdownSplitterConfig> = {
 	maxHeaderLevel: 6
 }
 
-/**
- * LangChain-powered markdown splitter that creates proper hierarchical relationships
- */
-export class HierarchicalMarkdownSplitter {
+export class MarkdownHeaderTextSplitter {
 	private config: Required<MarkdownSplitterConfig>
-	private splitter: RecursiveCharacterTextSplitter
 
 	constructor(config: MarkdownSplitterConfig = {}) {
 		this.config = { ...DEFAULT_CONFIG, ...config }
+	}
 
-		// Create LangChain recursive splitter with markdown-specific separators
-		this.splitter = new RecursiveCharacterTextSplitter({
-			chunkSize: this.config.chunkSize,
-			chunkOverlap: this.config.chunkOverlap,
-			keepSeparator: this.config.keepSeparator,
-			lengthFunction: this.config.lengthFunction,
-			separators: [
-				// Markdown-specific separators in priority order
-				'\n## ', // H2 headers
-				'\n### ', // H3 headers
-				'\n#### ', // H4 headers
-				'\n##### ', // H5 headers
-				'\n###### ', // H6 headers
-				'\n# ', // H1 headers (lower priority to keep sections together)
-				'\n\n', // Paragraph breaks
-				'\n- ', // Unordered list items
-				'\n* ', // Alternative unordered list
-				'\n+ ', // Alternative unordered list
-				/\n\d+\. /.source, // Numbered list items
-				'```\n', // Code block endings
-				'\n```', // Code block beginnings
-				'.\n', // Sentence endings
-				'.\t', // Sentence endings with tabs
-				'. ', // Sentence endings with space
-				'\n', // Line breaks
-				' ', // Word boundaries
-				'', // Character level (fallback)
-			]
-		})
+	/**
+	 * Fallback chunking when a single header section exceeds the configured chunkSize.
+	 * Unlike LangChain's RecursiveCharacterTextSplitter, we keep things simple: we do
+	 * fixed-size sliding window chunks with configurable overlap.
+	 */
+	private simpleSplitText(text: string): string[] {
+		const { chunkSize, chunkOverlap, lengthFunction } = this.config
+
+		// Short-circuit for small texts
+		if (lengthFunction(text) <= chunkSize) return [text]
+
+		const chunks: string[] = []
+		let start = 0
+
+		while (start < text.length) {
+			const end = Math.min(text.length, start + chunkSize)
+			const chunk = text.slice(start, end)
+			chunks.push(chunk)
+
+			if (end >= text.length) break
+
+			// Move the window forward taking overlap into account
+			start = end - chunkOverlap
+		}
+
+		return chunks
 	}
 
 	/**
@@ -100,7 +94,7 @@ export class HierarchicalMarkdownSplitter {
 		const headerSections = this.parseMarkdownSections(text)
 
 		// Then use LangChain to intelligently split large sections that exceed chunk size
-		const refinedSections = await this.refineSectionsWithLangChain(headerSections)
+		const refinedSections = await this.refineSections(headerSections)
 
 		// Create nodes from sections
 		const nodes = this.createNodesFromSections(refinedSections)
@@ -228,7 +222,7 @@ export class HierarchicalMarkdownSplitter {
 	/**
 	 * Use LangChain to further split sections that are too large
 	 */
-	private async refineSectionsWithLangChain(sections: Array<{
+	private async refineSections(sections: Array<{
 		id: string
 		headerLevel: number
 		headerText: string
@@ -252,45 +246,39 @@ export class HierarchicalMarkdownSplitter {
 				continue
 			}
 
-			// Use LangChain to split large sections intelligently
-			try {
-				const chunks = await this.splitter.splitText(section.content)
+			// Split the oversized section using the internal simple chunker
+			const chunks = this.simpleSplitText(section.content)
 
-				// Create sub-sections from chunks
-				let chunkStartIndex = section.startIndex
-				for (let i = 0; i < chunks.length; i++) {
-					const chunk = chunks[i]
-					const chunkEndIndex = chunkStartIndex + chunk.length
+			// Create sub-sections from chunks
+			let chunkStartIndex = section.startIndex
+			for (let i = 0; i < chunks.length; i++) {
+				const chunk = chunks[i]
+				const chunkEndIndex = chunkStartIndex + chunk.length
 
-					// For the first chunk, preserve the original header info
-					if (i === 0) {
-						refinedSections.push({
-							id: section.id,
-							headerLevel: section.headerLevel,
-							headerText: section.headerText,
-							content: chunk.trim(),
-							startIndex: chunkStartIndex,
-							endIndex: chunkEndIndex
-						})
-					} else {
-						// For subsequent chunks, create continuation sections
-						const chunkHeaderText = `${section.headerText} (continued ${i + 1})`
-						refinedSections.push({
-							id: `${section.id}-part-${i + 1}`,
-							headerLevel: section.headerLevel,
-							headerText: chunkHeaderText,
-							content: chunk.trim(),
-							startIndex: chunkStartIndex,
-							endIndex: chunkEndIndex
-						})
-					}
-
-					chunkStartIndex = chunkEndIndex
+				// Preserve header for first chunk
+				if (i === 0) {
+					refinedSections.push({
+						id: section.id,
+						headerLevel: section.headerLevel,
+						headerText: section.headerText,
+						content: chunk.trim(),
+						startIndex: chunkStartIndex,
+						endIndex: chunkEndIndex
+					})
+				} else {
+					// Continuation chunks
+					const chunkHeaderText = `${section.headerText} (continued ${i + 1})`
+					refinedSections.push({
+						id: `${section.id}-part-${i + 1}`,
+						headerLevel: section.headerLevel,
+						headerText: chunkHeaderText,
+						content: chunk.trim(),
+						startIndex: chunkStartIndex,
+						endIndex: chunkEndIndex
+					})
 				}
-			} catch (error) {
-				// If LangChain splitting fails, keep the original section
-				console.warn('LangChain splitting failed for section:', section.headerText, error)
-				refinedSections.push(section)
+
+				chunkStartIndex = chunkEndIndex
 			}
 		}
 
@@ -434,18 +422,18 @@ export class HierarchicalMarkdownSplitter {
 	}
 }
 
-/**
- * Legacy splitter for backward compatibility
- */
-export class RecursiveMarkdownSplitter extends HierarchicalMarkdownSplitter {
+// Legacy alias for backward compatibility – behaves exactly the same as the new MarkdownHeaderTextSplitter
+export class HierarchicalMarkdownSplitter extends MarkdownHeaderTextSplitter { }
+
+export class RecursiveMarkdownSplitter extends MarkdownHeaderTextSplitter {
 	// This now extends the new LangChain-powered hierarchical splitter for backward compatibility
 }
 
 /**
  * Utility function to create a markdown splitter with default settings
  */
-export function createMarkdownSplitter(config?: MarkdownSplitterConfig): HierarchicalMarkdownSplitter {
-	return new HierarchicalMarkdownSplitter(config)
+export function createMarkdownSplitter(config?: MarkdownSplitterConfig): MarkdownHeaderTextSplitter {
+	return new MarkdownHeaderTextSplitter(config)
 }
 
 /**

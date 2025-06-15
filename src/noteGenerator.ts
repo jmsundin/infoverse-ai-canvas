@@ -22,11 +22,6 @@ import {
 import { Logger } from './util/logging'
 import { visitNodeAndAncestors } from './obsidian/canvasUtil'
 import { readNodeContent } from './obsidian/fileUtil'
-import {
-	splitMarkdownForCanvas,
-	MarkdownSplitterConfig,
-	NodeEdge
-} from './util/markdownSplitter'
 
 /**
  * Color for assistant notes: 6 == purple
@@ -88,6 +83,9 @@ class StreamingHandler {
 	private lastProcessedLength = 0
 	private enableLiveSplitting = false
 	private nodeCounter = 0
+	// Dynamic hierarchy tracking
+	private firstHeaderLevel: number | null = null // level (1-6) of the first header we encounter
+	private topLevelCurrent: TreeNode | null = null // last node at firstHeaderLevel to attach children to
 
 	constructor(
 		canvas: any,
@@ -287,46 +285,83 @@ class StreamingHandler {
 		endIndex: number
 		fullLine: string
 	}) {
+		// Determine allowed depth dynamically
+		if (this.firstHeaderLevel === null) {
+			this.firstHeaderLevel = header.level
+		}
+
+		const maxAllowedLevel = this.firstHeaderLevel + 1
+		if (header.level > maxAllowedLevel) {
+			return // ignore deeper headers
+		}
+
 		try {
-			// Find the content for the previous section (before this header)
+			// Decide parent based on dynamic flat hierarchy rules
+			let parentTreeNode: TreeNode | null
+			if (header.level === this.firstHeaderLevel) {
+				parentTreeNode = this.treeRoot
+			} else {
+				// header.level == firstHeaderLevel + 1
+				parentTreeNode = this.topLevelCurrent || this.treeRoot
+			}
+
+			if (!parentTreeNode) {
+				this.logDebug('No parent available for new header, skipping')
+				return
+			}
+
+			// Find content before header and update previous node
 			const contentBeforeHeader = this.currentText.slice(this.lastProcessedLength, header.startIndex).trim()
 
-			// If there's content before this header, update the current active node
+			// ---------------------------------------------------------------------
+			// Root-note fix: if the very first header starts at index 0 we know that
+			// there is no real root-level content.  The original placeholder canvas
+			// node would otherwise keep showing "Calling AI…" (or similar) and later
+			// get filled with the complete text, effectively duplicating content.
+			//
+			// We therefore remove (or clear) the visual root node and demote the
+			// treeRoot so that it will never be selected by
+			// getCurrentActiveTreeNode() again.
+			// ---------------------------------------------------------------------
+			if (header.startIndex === 0 && this.treeRoot && this.nodeMap.size === 1) {
+				try {
+					if (this.treeRoot.canvasNode) {
+						// Remove only the visual element – the logical root stays for hierarchy
+						this.canvas.removeNode(this.treeRoot.canvasNode)
+						this.treeRoot.canvasNode = undefined
+					}
+					// Ensure root is not treated as the most recent node anymore
+					this.treeRoot.startIndex = -1
+					this.logDebug('Root placeholder removed after first header at index 0')
+				} catch (cleanupErr) {
+					this.logDebug('Failed to remove root placeholder', cleanupErr)
+				}
+			}
+
 			if (contentBeforeHeader.length > 0) {
 				this.updateCurrentActiveNode()
 			}
 
-			// Create a new tree node for this header section
 			const newTreeNode: TreeNode = {
 				id: `node-${this.nodeCounter++}`,
-				content: '', // Will be filled as we stream more content
+				content: '',
 				headerLevel: header.level,
 				headerText: header.text,
 				startIndex: header.startIndex,
-				endIndex: header.endIndex, // Will be updated as content grows
+				endIndex: header.endIndex,
+				parentId: parentTreeNode.id,
 				children: []
 			}
 
-			// Find the appropriate parent in the tree hierarchy
-			const parentTreeNode = this.findParentForLevel(header.level)
-			if (parentTreeNode) {
-				newTreeNode.parentId = parentTreeNode.id
-				parentTreeNode.children.push(newTreeNode)
-				this.logDebug(`Added node "${header.text}" as child of "${parentTreeNode.headerText}"`)
-			} else {
-				// This is a root-level header, add to tree root
-				if (this.treeRoot) {
-					newTreeNode.parentId = this.treeRoot.id
-					this.treeRoot.children.push(newTreeNode)
-				}
-				this.logDebug(`Added node "${header.text}" as root-level header`)
-			}
-
-			// Create the canvas node for this tree node
+			// Attach to parent and update maps
+			parentTreeNode.children.push(newTreeNode)
 			await this.createCanvasNodeForTreeNode(newTreeNode, parentTreeNode)
-
-			// Store in node map
 			this.nodeMap.set(newTreeNode.id, newTreeNode)
+
+			// Update top-level tracker
+			if (header.level === this.firstHeaderLevel) {
+				this.topLevelCurrent = newTreeNode
+			}
 
 			this.logDebug(`Created tree node for header: "${header.text}" (level ${header.level})`)
 
@@ -413,7 +448,7 @@ class StreamingHandler {
 					})
 					this.logDebug('Created edge between nodes')
 				} catch (edgeError) {
-					this.logDebug('Edge creation not supported, skipping edges:', edgeError)
+					this.logDebug('Edge creation failed', edgeError)
 				}
 			}
 
@@ -513,8 +548,8 @@ class StreamingHandler {
 	private getCurrentActiveTreeNode(): TreeNode | null {
 		if (!this.treeRoot) return null
 
-		// Find the most recently created node (highest start index)
-		const allNodes = Array.from(this.nodeMap.values())
+		// Consider only nodes that still have a visible canvas element
+		const allNodes = Array.from(this.nodeMap.values()).filter(n => n.canvasNode)
 		if (allNodes.length === 0) return this.treeRoot
 
 		allNodes.sort((a, b) => b.startIndex - a.startIndex)
@@ -533,7 +568,19 @@ class StreamingHandler {
 		// Find the next header at the same or higher level to determine where this content ends
 		const allHeaders = this.parseHeaders(this.currentText)
 		for (const header of allHeaders) {
-			if (header.startIndex > startIndex && header.level <= treeNode.headerLevel) {
+			if (header.startIndex <= startIndex) continue
+
+			// Special-case root: stop at the very first header of ANY level
+			if (treeNode.headerLevel === 0) {
+				endIndex = header.startIndex
+				break
+			}
+
+			// For non-root nodes end right before the *next* header that is either
+			//  • the same level (another sibling)
+			//  • or exactly one level deeper (its first child)
+			// This prevents the parent from including the child header text itself.
+			if (header.level <= treeNode.headerLevel + 1) {
 				endIndex = header.startIndex
 				break
 			}
@@ -1087,6 +1134,7 @@ export function noteGenerator(
 
 		logDebug('Creating AI note')
 
+
 		const canvas = getActiveCanvas()
 
 		if (!canvas) {
@@ -1109,7 +1157,15 @@ export function noteGenerator(
 			await canvas.requestSave()
 			await sleep(200)
 
+			// Temporarily override the system prompt for single-response generation
+			const originalSystemPrompt = settings.systemPrompt
+			settings.systemPrompt = settings.singleResponsePrompt || originalSystemPrompt
+
 			const { messages, tokenCount } = await buildMessages(node)
+
+			// Restore the original system prompt so other actions (e.g., mind-map) remain unaffected
+			settings.systemPrompt = originalSystemPrompt
+
 			if (!messages.length) {
 				return
 			}
@@ -1134,12 +1190,20 @@ export function noteGenerator(
 			try {
 				logDebug('messages', messages)
 
-				// Always use streaming
+				// For the "Generate single AI response" action we force-disable
+				// markdown splitting so that the reply stays in one note even if
+				// the user has global splitting turned on in plugin settings.
+				const singleResponseSettings = {
+					...settings,
+					enableMarkdownSplitting: false,
+					enableStreamingSplit: false
+				} as typeof settings
+
 				const streamingHandler = new StreamingHandler(
 					canvas,
 					node,
 					created,
-					settings,
+					singleResponseSettings,
 					logDebug
 				)
 
@@ -1201,10 +1265,10 @@ export function noteGenerator(
 		}
 	}
 
-	const generateMindmapNote = async () => {
+	const generateMindmap = async () => {
 		if (!canCallAI()) return
 
-		logDebug('Creating AI note (mindmap mode simplified to single note)')
+		logDebug('Creating AI mind-map (H1 root + H2 children)')
 
 		const canvas = getActiveCanvas()
 		if (!canvas) {
@@ -1216,368 +1280,201 @@ export function noteGenerator(
 
 		const selection = canvas.selection
 		if (selection?.size !== 1) return
-		const values = Array.from(selection.values())
-		const node = values[0]
-
-		if (node) {
-			// Last typed characters might not be applied to note yet
-			await canvas.requestSave()
-			await sleep(200)
-
-			const { messages, tokenCount } = await buildMessages(node)
-			if (!messages.length) return
-
-			const created = createNode(
-				canvas,
-				node,
-				{
-					text: `Calling AI (${settings.apiModel})...`,
-					size: { height: placeholderNoteHeight }
-				},
-				{
-					color: assistantColor,
-					chat_role: 'assistant'
-				}
-			)
-
-			new Notice(
-				`Sending ${messages.length} notes with ${tokenCount} tokens to AI`
-			)
-
-			try {
-				logDebug('messages', messages)
-
-				// Use streaming if enabled
-				if (settings.enableStreaming) {
-					const streamingHandler = new StreamingHandler(
-						canvas,
-						node,
-						created,
-						settings,
-						logDebug
-					)
-
-					new Notice(`Streaming ${settings.apiModel} response...`)
-
-					await callAIStreaming(
-						messages,
-						streamingHandler.onToken,
-						streamingHandler.onComplete,
-						streamingHandler.onError
-					)
-
-					await canvas.requestSave()
-					return
-				}
-
-				// Fallback to non-streaming mode
-				const generated = await callAI(messages)
-
-				if (generated == null) {
-					new Notice(`Empty or unreadable response from AI`)
-					canvas.removeNode(created)
-					return
-				}
-
-				// Single note output (mindmap functionality removed)
-				created.setText(generated)
-				const height = calcHeight({
-					text: generated,
-					parentHeight: node.height
-				})
-				created.moveAndResize({
-					height,
-					width: created.width,
-					x: created.x,
-					y: created.y
-				})
-
-				canvas.selectOnly(created, false /* startEditing */)
-			} catch (error) {
-				new Notice(`Error calling AI: ${error.message || error}`)
-				canvas.removeNode(created)
-			}
-
-			await canvas.requestSave()
-		}
-	}
-
-	const splitMarkdownHierarchical = async () => {
-		if (!settings.enableMarkdownSplitting) {
-			new Notice('Markdown splitting is disabled. Enable it in settings.')
-			return
-		}
-
-		const canvas = getActiveCanvas()
-		if (!canvas) {
-			logDebug('No active canvas')
-			return
-		}
-
-		await canvas.requestFrame()
-
-		const selection = canvas.selection
-		if (selection?.size !== 1) {
-			new Notice('Please select exactly one note containing markdown text')
-			return
-		}
-
-		const values = Array.from(selection.values())
+		const values = Array.from(selection.values()) as CanvasNode[]
 		const node = values[0]
 
 		if (!node) return
 
-		try {
-			// Save any pending changes
-			await canvas.requestSave()
-			await sleep(200)
+		// Flush any in-progress edits on the selected node so we send the latest text
+		await canvas.requestSave()
+		await sleep(200)
 
-			// Get the content of the selected node
-			const nodeContent = await readNodeContent(node)
-			if (!nodeContent) {
-				new Notice('No content found in selected note')
+		const { messages, tokenCount } = await buildMessages(node)
+		if (!messages.length) return
+
+		// Placeholder that will become the root note later
+		const placeholder = createNode(
+			canvas,
+			node,
+			{
+				text: `Calling AI (${settings.apiModel})...`,
+				size: { height: placeholderNoteHeight }
+			},
+			{
+				color: assistantColor,
+				chat_role: 'assistant'
+			}
+		)
+
+		new Notice(`Sending ${messages.length} notes with ${tokenCount} tokens to AI`)
+
+		//------------------------------------------------------------------
+		// Streaming path – keep real-time updates when enabled
+		//------------------------------------------------------------------
+		if (settings.enableStreaming) {
+			const streamingHandler = new StreamingHandler(
+				canvas,
+				node,
+				placeholder,
+				settings,
+				logDebug
+			)
+
+			// Store reference for debug utilities
+			lastStreamingHandler = streamingHandler
+
+			new Notice(`Streaming ${settings.apiModel} response...`)
+
+			await callAIStreaming(
+				messages,
+				streamingHandler.onToken,
+				streamingHandler.onComplete,
+				streamingHandler.onError
+			)
+
+			await canvas.requestSave()
+			return // StreamingHandler manages note updates, skip non-streaming path
+		}
+
+		//------------------------------------------------------------------
+		// Non-streaming path – fallback & post-processing
+		//------------------------------------------------------------------
+
+		try {
+			logDebug('messages', messages)
+
+			// Force non-streaming response generation (already ensured by branch)
+			const generated = await callAI(messages)
+
+			if (!generated) {
+				new Notice('Empty or unreadable response from AI')
+				canvas.removeNode(placeholder)
 				return
 			}
 
-			new Notice('Splitting markdown into hierarchical notes...')
+			//------------------------------------------------------------------
+			// 1. Parse markdown into an ordered list of header sections
+			//------------------------------------------------------------------
 
-			// Configure the markdown splitter based on settings
-			const splitterConfig: MarkdownSplitterConfig = {
-				chunkSize: settings.markdownChunkSize,
-				chunkOverlap: settings.markdownChunkOverlap,
-				keepSeparator: settings.markdownKeepSeparators,
-				maxHeaderLevel: 6
-			}
+			type Section = { level: number; header: string; content: string }
+			const sections: Section[] = []
 
-			// Split the markdown content
-			const { nodes, edges, visualization } = await splitMarkdownForCanvas(
-				nodeContent,
-				splitterConfig
-			)
+			let currentHeaderLine = ''
+			let currentLines: string[] = []
 
-			logDebug('Split result:', {
-				nodeCount: nodes.length,
-				edgeCount: edges.length,
-				nodes: nodes.map(n => ({ id: n.id, level: n.level, parentId: n.parentId, headerText: n.content.split('\n')[0] }))
-			})
-
-			// Show tree visualization if enabled
-			if (settings.showMarkdownTreeVisualization && visualization) {
-				const visualizationNode = createNode(
-					canvas,
-					node,
-					{
-						text: `# Markdown Structure\n\`\`\`\n${visualization}\n\`\`\``,
-						size: { height: Math.max(200, visualization.split('\n').length * 20) }
-					},
-					{
-						color: '3', // Yellow for visualization
-						chat_role: 'system'
-					}
-				)
-
-				// Position the visualization node to the side
-				visualizationNode.moveAndResize({
-					x: node.x + node.width + 50,
-					y: node.y,
-					width: 400,
-					height: visualizationNode.height
+			const pushSection = () => {
+				if (!currentHeaderLine) return
+				const level = (currentHeaderLine.match(/^#+/) || [''])[0].length
+				const headerText = currentHeaderLine.replace(/^#+\s*/, '').trim()
+				sections.push({
+					level,
+					header: headerText,
+					content: currentLines.join('\n').trim()
 				})
 			}
 
-			// Create canvas nodes with proper hierarchical relationships
-			const createdNodes = new Map<string, CanvasNode>()
-			const baseX = node.x
-			const baseY = node.y + node.height + 100
-
-			// Helper function to determine node color based on header level
-			const getNodeColor = (level: number): string => {
-				switch (level) {
-					case 0: return '2' // Orange for introduction/root content
-					case 1: return '1' // Red for main headers (H1)
-					case 2: return '4' // Green for sub-headers (H2)
-					case 3: return '5' // Purple for sub-sub-headers (H3)
-					case 4: return '6' // Pink for H4
-					case 5: return '3' // Yellow for H5
-					case 6: return assistantColor // Default purple for H6
-					default: return assistantColor // Default
-				}
-			}
-
-			// Create nodes in hierarchical order, ensuring parents are created before children
-			const levelGroups = new Map<number, typeof nodes>()
-			nodes.forEach(nodeData => {
-				const level = nodeData.level
-				if (!levelGroups.has(level)) {
-					levelGroups.set(level, [])
-				}
-				levelGroups.get(level)!.push(nodeData)
-			})
-
-			// Sort levels to process from top (0) to bottom
-			const sortedLevels = Array.from(levelGroups.keys()).sort((a, b) => a - b)
-
-			// Track position for each hierarchy level
-			const depthTracker = new Map<string, number>() // Track hierarchy depth for each node
-
-			// Calculate hierarchy depth for each node
-			const calculateDepth = (nodeId: string, edgeList: NodeEdge[]): number => {
-				if (depthTracker.has(nodeId)) {
-					return depthTracker.get(nodeId)!
-				}
-
-				// Find parent edge
-				const parentEdge = edgeList.find(edge => edge.to === nodeId)
-				if (!parentEdge) {
-					// Root node
-					depthTracker.set(nodeId, 0)
-					return 0
-				}
-
-				// Recursive depth calculation
-				const parentDepth = calculateDepth(parentEdge.from, edgeList)
-				const depth = parentDepth + 1
-				depthTracker.set(nodeId, depth)
-				return depth
-			}
-
-			// Calculate depths for all nodes
-			nodes.forEach(nodeData => {
-				calculateDepth(nodeData.id, edges)
-			})
-
-			// Process nodes level by level
-			for (const level of sortedLevels) {
-				const nodesAtLevel = levelGroups.get(level)!
-
-				for (const nodeData of nodesAtLevel) {
-					// Find parent canvas node if it exists
-					let parentCanvasNode: CanvasNode | undefined
-					if (nodeData.parentId && createdNodes.has(nodeData.parentId)) {
-						parentCanvasNode = createdNodes.get(nodeData.parentId)!
-					}
-
-					// Calculate position based on hierarchy structure
-					let x: number, y: number
-					const hierarchyDepth = depthTracker.get(nodeData.id) || 0
-
-					if (hierarchyDepth === 0 || !parentCanvasNode) {
-						// Root level nodes - position them in a single column at base position
-						const rootIndex = Array.from(createdNodes.values()).filter(n => {
-							// Find the node data for this canvas node
-							const nodeEntry = Array.from(createdNodes.entries()).find(([id, canvasNode]) => canvasNode === n)
-							return nodeEntry && depthTracker.get(nodeEntry[0]) === 0
-						}).length
-
-						x = baseX
-						y = baseY + (rootIndex * 200) // Space root nodes vertically
-					} else {
-						// Child nodes - position relative to parent in tree structure
-						const parentPos = { x: parentCanvasNode.x, y: parentCanvasNode.y }
-						const parentId = nodeData.parentId!
-
-						// Get all siblings at this level under the same parent
-						const siblings = nodes.filter(n => n.parentId === parentId)
-						const siblingIndex = siblings.findIndex(n => n.id === nodeData.id)
-
-						// Position children to the right of their parent
-						x = parentPos.x + (settings.markdownHierarchySpacing || 450)
-
-						// For the first child, start slightly below the parent
-						// For subsequent children, space them vertically
-						if (siblingIndex === 0) {
-							y = parentPos.y + 50 // First child starts slightly below parent
-						} else {
-							// Calculate cumulative height of previous siblings to avoid overlap
-							let cumulativeHeight = parentPos.y + 50
-							for (let i = 0; i < siblingIndex; i++) {
-								const siblingId = siblings[i].id
-								const siblingNode = createdNodes.get(siblingId)
-								if (siblingNode) {
-									cumulativeHeight += siblingNode.height + 30 // Add sibling height plus spacing
-								} else {
-									cumulativeHeight += 150 // Estimated height if sibling not yet created
-								}
-							}
-							y = cumulativeHeight
-						}
-					}
-
-					// Create the canvas node
-					const createdNode = createNode(
-						canvas,
-						parentCanvasNode || node,
-						{
-							text: nodeData.content,
-							size: {
-								height: calcHeight({
-									text: nodeData.content,
-									parentHeight: (parentCanvasNode || node).height
-								})
-							}
-						},
-						{
-							color: getNodeColor(nodeData.level),
-							chat_role: 'assistant'
-						}
-					)
-
-					// Position the node
-					createdNode.moveAndResize({
-						x,
-						y,
-						width: 400,
-						height: createdNode.height
-					})
-
-					// Store the created node
-					createdNodes.set(nodeData.id, createdNode)
-
-					logDebug(`Created node: ${nodeData.id}, level: ${nodeData.level}, depth: ${hierarchyDepth}, position: (${x}, ${y}), parentId: ${nodeData.parentId}`)
-				}
-			}
-
-			// Create edges if hierarchy is enabled
-			if (settings.enableMarkdownHierarchy) {
-				let edgesCreated = 0
-				for (const edge of edges) {
-					const parentNode = createdNodes.get(edge.from)
-					const childNode = createdNodes.get(edge.to)
-
-					if (parentNode && childNode) {
-						try {
-							// Create edge using canvas internal method
-							(canvas as any).createEdge?.(parentNode, childNode, {
-								fromSide: 'right',
-								toSide: 'left'
-							})
-							edgesCreated++
-							logDebug(`Created edge: ${edge.from} -> ${edge.to}`)
-						} catch (edgeError) {
-							// Fallback: create visual indicators if edge creation fails
-							logDebug('Edge creation not supported:', edgeError)
-						}
-					} else {
-						logDebug(`Missing nodes for edge ${edge.from} -> ${edge.to}:`, {
-							parentExists: !!parentNode,
-							childExists: !!childNode
-						})
-					}
-				}
-
-				if (edgesCreated > 0) {
-					new Notice(`Created ${nodes.length} hierarchical notes with ${edgesCreated} connections`)
+			for (const line of generated.split(/\r?\n/)) {
+				if (/^#{1,6}\s+/.test(line)) {
+					pushSection()
+					currentHeaderLine = line
+					currentLines = []
 				} else {
-					new Notice(`Created ${nodes.length} hierarchical notes (edge creation not supported by this canvas version)`)
+					currentLines.push(line)
 				}
-			} else {
-				new Notice(`Created ${nodes.length} hierarchical notes`)
+			}
+			pushSection()
+
+			// Count headers for rule decisions
+			const h1Exists = sections.some(s => s.level === 1)
+			const h2Sections = sections.filter(s => s.level === 2)
+			const h2Count = h2Sections.length
+
+			//------------------------------------------------------------------
+			// 2. Build the canvas hierarchy according to the rules
+			//------------------------------------------------------------------
+
+			// Decide the absolute root canvas node (original note always wins)
+			const rootNode = node
+
+			// Helper to position nodes
+			const horizontalSpacing = settings.markdownHierarchySpacing || 450
+			const verticalSpacing = 200
+
+			let h1CanvasNode: CanvasNode | null = null
+			// Stack keeps current branch of canvas nodes
+			const stack: { level: number; node: CanvasNode }[] = [{ level: 0, node: rootNode }]
+
+			const createCanvasChild = (parent: CanvasNode, text: string, level: number): CanvasNode => {
+				const childNode = createNode(
+					canvas,
+					parent,
+					{
+						text,
+						size: { height: calcHeight({ text, parentHeight: parent.height }) }
+					},
+					{ color: (level === 1 ? '1' : level === 2 ? '4' : '5'), chat_role: 'assistant' }
+				)
+
+				// Simple positioning: offset right by level, and vertically by index among siblings
+				const siblings = (stack.filter(s => s.node === parent).length) // approx
+				childNode.moveAndResize({
+					x: parent.x + horizontalSpacing,
+					y: parent.y + siblings * verticalSpacing,
+					width: childNode.width,
+					height: childNode.height
+				})
+
+				// Edge (best-effort)
+				try {
+					(canvas as any).createEdge?.(parent, childNode, { fromSide: 'right', toSide: 'left' })
+				} catch (edgeError) {
+					logDebug('Edge creation failed', edgeError)
+				}
+
+				return childNode
 			}
 
-			await canvas.requestSave()
+			for (const sec of sections) {
+				const headerText = `${'#'.repeat(sec.level)} ${sec.header}`
+				const fullText = `${headerText}\n\n${sec.content}`.trim()
+
+				let parentForThis: CanvasNode
+				if (sec.level === 1) {
+					parentForThis = rootNode
+					stack.length = 1
+				} else if (sec.level === 2) {
+					// Single H2 special case
+					if (h2Count === 1) {
+						parentForThis = rootNode
+					} else {
+						parentForThis = h1Exists && h1CanvasNode ? h1CanvasNode : rootNode
+					}
+					stack.length = h1Exists && h1CanvasNode ? 2 : 1
+				} else {
+					// Level >=3 : attach to nearest shallower header
+					while (stack.length && stack[stack.length - 1].level >= sec.level) {
+						stack.pop()
+					}
+					parentForThis = stack[stack.length - 1].node
+				}
+
+				const newNode = createCanvasChild(parentForThis, fullText, sec.level)
+
+				// Track special references
+				if (sec.level === 1) {
+					h1CanvasNode = newNode
+				}
+
+				stack.push({ level: sec.level, node: newNode })
+			}
+
+			canvas.selectOnly(rootNode, false /* startEditing */)
+
 		} catch (error) {
-			console.error('Error splitting markdown:', error)
-			new Notice(`Error splitting markdown: ${error.message || error}`)
+			new Notice(`Error calling AI: ${error.message || error}`)
+			canvas.removeNode(placeholder)
+		} finally {
+			await canvas.requestSave()
 		}
 	}
 
@@ -1601,365 +1498,48 @@ export function noteGenerator(
 		return lastStreamingHandler.getTreeStructure()
 	}
 
-	/**
-	 * Generate hierarchical mindmap from selected note
-	 */
-	const generateHierarchicalMindmap = async () => {
-		if (!canCallAI()) return
+	// ---------------------------------------------------------------------------
+	// Encoding & token limit helpers (re-added after earlier refactor)
+	// ---------------------------------------------------------------------------
 
-		logDebug('Creating hierarchical mindmap')
-
-		const canvas = getActiveCanvas()
-		if (!canvas) {
-			logDebug('No active canvas')
-			return
-		}
-
-		await canvas.requestFrame()
-
-		const selection = canvas.selection
-		if (selection?.size !== 1) return
-		const values = Array.from(selection.values())
-		const node = values[0]
-
-		if (node) {
-			await canvas.requestSave()
-			await sleep(200)
-
-			const { messages, tokenCount } = await buildMessages(node)
-			if (!messages.length) return
-
-			// Add specific prompt for hierarchical mindmap
-			const mindmapPrompt = `Create a hierarchical mindmap from the content. Structure your response with clear headers and subheaders using markdown format. Start with a main topic, then break it down into key categories with subcategories. Use ## for main categories, ### for subcategories, and #### for details. Make it comprehensive and well-organized.`
-
-			messages.push({
-				role: 'user',
-				content: mindmapPrompt
-			})
-
-			const created = createNode(
-				canvas,
-				node,
-				{
-					text: `Creating hierarchical mindmap (${settings.apiModel})...`,
-					size: { height: placeholderNoteHeight }
-				},
-				{
-					color: '4', // Green for hierarchical
-					chat_role: 'assistant'
-				}
+	function getEncoding(settings: InfoverseAICanvasSettings) {
+		const openaiModel: ChatModelSettings | undefined = chatModelByName(settings.apiModel)
+		if (openaiModel) {
+			return encodingForModel(
+				(openaiModel.encodingFrom || openaiModel.name || DEFAULT_SETTINGS.apiModel) as TiktokenModel
 			)
-
-			new Notice(`Generating hierarchical mindmap with ${tokenCount} tokens`)
-
-			try {
-				// Always use streaming with header-based splitting enabled temporarily
-				const originalSplittingEnabled = settings.enableMarkdownSplitting
-				settings.enableMarkdownSplitting = true
-
-				const streamingHandler = new StreamingHandler(
-					canvas,
-					node,
-					created,
-					settings,
-					logDebug
-				)
-
-				lastStreamingHandler = streamingHandler
-
-				await callAIStreaming(
-					messages,
-					streamingHandler.onToken,
-					streamingHandler.onComplete,
-					streamingHandler.onError
-				)
-
-				// Restore original setting
-				settings.enableMarkdownSplitting = originalSplittingEnabled
-
-				await canvas.requestSave()
-			} catch (error) {
-				new Notice(`Error generating hierarchical mindmap: ${error.message || error}`)
-				canvas.removeNode(created)
-			}
 		}
+
+		// Gemini models – fallback encoding (approximation)
+		return encodingForModel('gpt-3.5-turbo' as TiktokenModel)
 	}
 
-	/**
-	 * Generate radial mindmap from selected note
-	 */
-	const generateRadialMindmap = async () => {
-		if (!canCallAI()) return
-
-		logDebug('Creating radial mindmap')
-
-		const canvas = getActiveCanvas()
-		if (!canvas) {
-			logDebug('No active canvas')
-			return
+	function getTokenLimit(settings: InfoverseAICanvasSettings) {
+		const openaiModel = chatModelByName(settings.apiModel)
+		if (openaiModel) {
+			return settings.maxInputTokens
+				? Math.min(settings.maxInputTokens, openaiModel.tokenLimit)
+				: openaiModel.tokenLimit
 		}
 
-		await canvas.requestFrame()
-
-		const selection = canvas.selection
-		if (selection?.size !== 1) return
-		const values = Array.from(selection.values())
-		const node = values[0]
-
-		if (node) {
-			await canvas.requestSave()
-			await sleep(200)
-
-			const { messages, tokenCount } = await buildMessages(node)
-			if (!messages.length) return
-
-			// Add specific prompt for radial mindmap
-			const mindmapPrompt = `Create a radial mindmap structure from the content. Generate multiple related branches that extend from the central concept. Structure it as separate key topics that each explore different aspects of the main idea. Each topic should be distinct but connected to the central theme. Use ## headers for each main branch.`
-
-			messages.push({
-				role: 'user',
-				content: mindmapPrompt
-			})
-
-			const created = createNode(
-				canvas,
-				node,
-				{
-					text: `Creating radial mindmap (${settings.apiModel})...`,
-					size: { height: placeholderNoteHeight }
-				},
-				{
-					color: '5', // Blue for radial
-					chat_role: 'assistant'
-				}
-			)
-
-			new Notice(`Generating radial mindmap with ${tokenCount} tokens`)
-
-			try {
-				const generated = await callAI(messages)
-
-				if (generated == null) {
-					new Notice(`Empty response from AI`)
-					canvas.removeNode(created)
-					return
-				}
-
-				// Parse the response into topics and create nodes in radial pattern
-				const topics = generated.split(/(?=^## )/gm).filter(section => section.trim())
-
-				if (topics.length <= 1) {
-					// If no clear sections, create as single node
-					created.setText(generated)
-					const height = calcHeight({
-						text: generated,
-						parentHeight: node.height
-					})
-					created.moveAndResize({
-						height,
-						width: created.width,
-						x: created.x,
-						y: created.y
-					})
-				} else {
-					// Create radial layout
-					canvas.removeNode(created) // Remove placeholder
-
-					const centerX = node.x + node.width + 300
-					const centerY = node.y + node.height / 2
-					const radius = 250
-					const angleStep = (2 * Math.PI) / topics.length
-
-					topics.forEach((topic, index) => {
-						const angle = index * angleStep
-						const x = centerX + Math.cos(angle) * radius
-						const y = centerY + Math.sin(angle) * radius
-
-						const topicNode = createNode(
-							canvas,
-							node,
-							{
-								text: topic.trim(),
-								size: {
-									height: calcHeight({
-										text: topic.trim(),
-										parentHeight: node.height
-									})
-								}
-							},
-							{
-								color: '5', // Blue for radial
-								chat_role: 'assistant'
-							}
-						)
-
-						topicNode.moveAndResize({
-							x: x - 200, // Offset for node width
-							y: y - topicNode.height / 2,
-							width: 400,
-							height: topicNode.height
-						})
-					})
-
-					new Notice(`Created radial mindmap with ${topics.length} branches`)
-				}
-
-				await canvas.requestSave()
-			} catch (error) {
-				new Notice(`Error generating radial mindmap: ${error.message || error}`)
-				canvas.removeNode(created)
-			}
-		}
-	}
-
-	/**
-	 * Generate single AI response note without chunking or splitting
-	 */
-	const generateSingleAIResponse = async () => {
-		if (!canCallAI()) return
-
-		logDebug('Creating single AI response note')
-
-		const canvas = getActiveCanvas()
-		if (!canvas) {
-			logDebug('No active canvas')
-			return
+		const geminiModel = Object.values(GEMINI_MODELS).find(m => m.name === settings.apiModel)
+		if (geminiModel) {
+			return settings.maxInputTokens
+				? Math.min(settings.maxInputTokens, geminiModel.tokenLimit)
+				: geminiModel.tokenLimit
 		}
 
-		await canvas.requestFrame()
-
-		const selection = canvas.selection
-		if (selection?.size !== 1) return
-		const values = Array.from(selection.values())
-		const node = values[0]
-
-		if (node) {
-			await canvas.requestSave()
-			await sleep(200)
-
-			const { messages, tokenCount } = await buildMessages(node)
-			if (!messages.length) return
-
-			const created = createNode(
-				canvas,
-				node,
-				{
-					text: `Generating AI response (${settings.apiModel})...`,
-					size: { height: placeholderNoteHeight }
-				},
-				{
-					color: assistantColor,
-					chat_role: 'assistant'
-				}
-			)
-
-			new Notice(`Generating single AI response with ${tokenCount} tokens`)
-
-			try {
-				// Force single note mode by temporarily disabling splitting
-				const originalSplittingEnabled = settings.enableMarkdownSplitting
-				const originalStreamingEnabled = settings.enableStreaming
-
-				settings.enableMarkdownSplitting = false
-
-				if (originalStreamingEnabled) {
-					// Use streaming but without splitting
-					const streamingHandler = new StreamingHandler(
-						canvas,
-						node,
-						created,
-						settings,
-						logDebug
-					)
-
-					await callAIStreaming(
-						messages,
-						streamingHandler.onToken,
-						streamingHandler.onComplete,
-						streamingHandler.onError
-					)
-				} else {
-					// Use non-streaming mode
-					const generated = await callAI(messages)
-
-					if (generated == null) {
-						new Notice(`Empty response from AI`)
-						canvas.removeNode(created)
-						return
-					}
-
-					created.setText(generated)
-					const height = calcHeight({
-						text: generated,
-						parentHeight: node.height
-					})
-					created.moveAndResize({
-						height,
-						width: created.width,
-						x: created.x,
-						y: created.y
-					})
-
-					canvas.selectOnly(created, false)
-				}
-
-				// Restore original settings
-				settings.enableMarkdownSplitting = originalSplittingEnabled
-				settings.enableStreaming = originalStreamingEnabled
-
-				await canvas.requestSave()
-			} catch (error) {
-				new Notice(`Error generating AI response: ${error.message || error}`)
-				canvas.removeNode(created)
-			}
-		}
+		return settings.maxInputTokens
+			? Math.min(settings.maxInputTokens, CHAT_MODELS.GPT_35_TURBO_0125.tokenLimit)
+			: CHAT_MODELS.GPT_35_TURBO_0125.tokenLimit
 	}
 
 	return {
 		nextNote,
 		generateNote,
-		generateMindmapNote,
-		splitMarkdownHierarchical,
-		generateHierarchicalMindmap,
-		generateRadialMindmap,
-		generateSingleAIResponse,
+		generateMindmap,
 		// Debug utilities
 		getLastTreeVisualization,
 		getLastTreeStructure
 	}
-}
-
-function getEncoding(settings: InfoverseAICanvasSettings) {
-	const openaiModel: ChatModelSettings | undefined = chatModelByName(settings.apiModel)
-	if (openaiModel) {
-		return encodingForModel(
-			(openaiModel.encodingFrom || openaiModel.name || DEFAULT_SETTINGS.apiModel) as TiktokenModel
-		)
-	}
-
-	// For Gemini models, use a fallback encoding (Gemini uses different tokenization)
-	// For now, we'll use GPT-3.5-turbo as a reasonable approximation
-	return encodingForModel('gpt-3.5-turbo' as TiktokenModel)
-}
-
-function getTokenLimit(settings: InfoverseAICanvasSettings) {
-	const openaiModel = chatModelByName(settings.apiModel)
-	if (openaiModel) {
-		return settings.maxInputTokens
-			? Math.min(settings.maxInputTokens, openaiModel.tokenLimit)
-			: openaiModel.tokenLimit
-	}
-
-	// Check if it's a Gemini model
-	const geminiModel = Object.values(GEMINI_MODELS).find(model => model.name === settings.apiModel)
-	if (geminiModel) {
-		return settings.maxInputTokens
-			? Math.min(settings.maxInputTokens, geminiModel.tokenLimit)
-			: geminiModel.tokenLimit
-	}
-
-	// Fallback to default
-	return settings.maxInputTokens
-		? Math.min(settings.maxInputTokens, CHAT_MODELS.GPT_35_TURBO_0125.tokenLimit)
-		: CHAT_MODELS.GPT_35_TURBO_0125.tokenLimit
 }

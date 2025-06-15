@@ -116,10 +116,11 @@ export class SettingsTab extends PluginSettingTab {
 					})
 			})
 
+		// System prompt (used for mindmap / default generation)
 		new Setting(containerEl)
-			.setName('System prompt')
+			.setName('System prompt (mind-map / default)')
 			.setDesc(
-				`The system prompt sent with each request to the API. \n(Note: you can override this by beginning a note stream with a note starting 'SYSTEM PROMPT'. The remaining content of that note will be used as system prompt.)`
+				`The system prompt sent with each request for mind-map or default responses.\n(Note: you can override this in-canvas by starting a note with 'SYSTEM PROMPT'.)`
 			)
 			.addTextArea((component) => {
 				component.inputEl.rows = 6
@@ -128,6 +129,21 @@ export class SettingsTab extends PluginSettingTab {
 				component.setValue(this.plugin.settings.systemPrompt)
 				component.onChange(async (value) => {
 					this.plugin.settings.systemPrompt = value
+					await this.plugin.saveSettings()
+				})
+			})
+
+		// System prompt for single-response generation
+		new Setting(containerEl)
+			.setName('System prompt (single response)')
+			.setDesc('Prompt used when you click "Generate single AI response".')
+			.addTextArea((component) => {
+				component.inputEl.rows = 6
+				component.inputEl.style.width = '300px'
+				component.inputEl.style.fontSize = '10px'
+				component.setValue(this.plugin.settings.singleResponsePrompt)
+				component.onChange(async (value) => {
+					this.plugin.settings.singleResponsePrompt = value
 					await this.plugin.saveSettings()
 				})
 			})

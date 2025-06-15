@@ -54,6 +54,11 @@ export interface InfoverseAICanvasSettings {
 	systemPrompt: string
 
 	/**
+	 * The system prompt used for single (non-mindmap) AI responses
+	 */
+	singleResponsePrompt: string
+
+	/**
 	 * Enable debug output in the console
 	 */
 	debug: boolean
@@ -258,6 +263,11 @@ export const DEFAULT_SETTINGS: InfoverseAICanvasSettings = {
 	lastGeminiModel: '',
 	temperature: 1,
 	systemPrompt: DEFAULT_SYSTEM_PROMPT,
+	singleResponsePrompt: `You are a critical-thinking assistant bot.
+Consider the intent of my questions before responding.
+Do not restate my information unless I ask for it.
+Do not include caveats or disclaimers.
+Use step-by-step reasoning. Be brief.`.trim(),
 	debug: false,
 	maxInputTokens: 0,
 	maxResponseTokens: 0,
