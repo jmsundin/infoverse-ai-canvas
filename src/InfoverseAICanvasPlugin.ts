@@ -1,4 +1,4 @@
-import { Plugin, App, PluginManifest, ItemView } from 'obsidian'
+import { Plugin, App, PluginManifest, ItemView, addIcon } from 'obsidian'
 import {
 	InfoverseAICanvasSettings,
 	DEFAULT_SETTINGS
@@ -10,6 +10,10 @@ import { CanvasSelectionManager } from './ui/CanvasSelectionManager'
 import { TooltipAction } from './ui/CanvasTooltip'
 import { CanvasView } from './obsidian/canvas-patches'
 import { CanvasNode } from './obsidian/canvas-internal'
+import {
+	BUBBLE_CLUSTER_ICON_NAME,
+	BUBBLE_CLUSTER_SVG
+} from './ui/icons'
 
 /**
  * Obsidian plugin implementation.
@@ -26,6 +30,8 @@ export class InfoverseAICanvasPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings()
+
+		addIcon(BUBBLE_CLUSTER_ICON_NAME, BUBBLE_CLUSTER_SVG)
 
 		this.logDebug = this.settings.debug
 			? (message?: unknown, ...optionalParams: unknown[]) =>
@@ -44,19 +50,13 @@ export class InfoverseAICanvasPlugin extends Plugin {
 				id: 'single-response',
 				icon: 'message-square',
 				tooltip: 'Generate single AI response',
-				action: (node: CanvasNode) => generator.generateSingleAIResponse()
+				action: (node: CanvasNode) => generator.generateNote()
 			},
 			{
-				id: 'hierarchical-mindmap',
-				icon: 'git-branch',
-				tooltip: 'Generate a tree mindmap',
-				action: (node: CanvasNode) => generator.generateHierarchicalMindmap()
-			},
-			{
-				id: 'radial-mindmap',
-				icon: 'circle-dot',
-				tooltip: 'Generate a radial mindmap',
-				action: (node: CanvasNode) => generator.generateRadialMindmap()
+				id: 'bubble-cluster-mindmap',
+				icon: BUBBLE_CLUSTER_ICON_NAME,
+				tooltip: 'Generate a mindmap',
+				action: (node: CanvasNode) => generator.generateMindmap()
 			}
 		]
 
@@ -102,7 +102,7 @@ export class InfoverseAICanvasPlugin extends Plugin {
 			id: 'generate-mindmap',
 			name: 'Generate AI mindmap',
 			callback: () => {
-				generator.generateMindmapNote()
+				generator.generateMindmap()
 			},
 			hotkeys: [
 				{
@@ -112,64 +112,6 @@ export class InfoverseAICanvasPlugin extends Plugin {
 			]
 		})
 
-		this.addCommand({
-			id: 'split-markdown-hierarchical',
-			name: 'Split markdown into hierarchical notes',
-			callback: () => {
-				generator.splitMarkdownHierarchical()
-			},
-			hotkeys: [
-				{
-					modifiers: ['Alt', 'Shift'],
-					key: 'S'
-				}
-			]
-		})
-
-		// Add new commands for tooltip actions
-		this.addCommand({
-			id: 'generate-hierarchical-mindmap',
-			name: 'Generate hierarchical mindmap',
-			callback: () => {
-				generator.generateHierarchicalMindmap()
-			},
-			hotkeys: [
-				{
-					modifiers: ['Alt', 'Shift'],
-					key: 'H'
-				}
-			]
-		})
-
-		this.addCommand({
-			id: 'generate-radial-mindmap',
-			name: 'Generate radial mindmap',
-			callback: () => {
-				generator.generateRadialMindmap()
-			},
-			hotkeys: [
-				{
-					modifiers: ['Alt', 'Shift'],
-					key: 'R'
-				}
-			]
-		})
-
-		this.addCommand({
-			id: 'generate-single-response',
-			name: 'Generate single AI response',
-			callback: () => {
-				generator.generateSingleAIResponse()
-			},
-			hotkeys: [
-				{
-					modifiers: ['Alt', 'Shift'],
-					key: 'A'
-				}
-			]
-		})
-
-		console.log('InfoverseAICanvasPlugin: commands and tooltips added')
 	}
 
 	private setupCanvasTooltips(actions: TooltipAction[]) {
