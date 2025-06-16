@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 import { TiktokenModel, encodingForModel } from 'js-tiktoken'
 import { App, ItemView, Notice } from 'obsidian'
 import { CanvasNode } from './obsidian/canvas-internal'
@@ -6,12 +7,10 @@ import {
 	CHAT_MODELS,
 	chatModelByName,
 	ChatModelSettings,
-	getChatGPTCompletion,
 	getChatGPTStreamingCompletion
 } from './openai/chatGPT'
 import {
 	GEMINI_MODELS,
-	getGeminiCompletion,
 	getGeminiStreamingCompletion
 } from './gemini/geminiAPI'
 import { openai } from './openai/chatGPT-types'
@@ -86,6 +85,120 @@ class StreamingHandler {
 	// Dynamic hierarchy tracking
 	private firstHeaderLevel: number | null = null // level (1-6) of the first header we encounter
 	private topLevelCurrent: TreeNode | null = null // last node at firstHeaderLevel to attach children to
+
+	// ---------------------------------------------------------------------
+	// Radial layout helpers (streaming)
+	// ---------------------------------------------------------------------
+	private baseRadius() {
+		return this.settings.markdownHierarchySpacing || 300
+	}
+
+	/** Compute depth of a tree node (root=0) */
+	private getDepth(node: TreeNode): number {
+		let depth = 0
+		let current: TreeNode | undefined = node
+		while (current && current.parentId) {
+			const parent = this.nodeMap.get(current.parentId)
+			if (!parent) break
+			depth++
+			current = parent
+		}
+		return depth
+	}
+
+	/**
+	 * Arrange children of the given parentTreeNode in a radial fashion and
+	 * recursively process deeper levels. Runs lightweight on every new header.
+	 */
+	private applyRadialLayout(parentTreeNode: TreeNode) {
+		const parentCanvas: CanvasNode = parentTreeNode.canvasNode || this.parentNode
+		if (!parentCanvas) return // safety
+
+		const children = parentTreeNode.children.filter(c => c.canvasNode)
+		if (children.length === 0) return
+
+		const n = children.length
+
+		// ------------------------------------------------------------------
+		// Custom angle mapping for the first five root-level children so
+		// that their positions match the exact sequence requested by the
+		// user.  For any deeper levels or n > 5 we keep using the regular
+		// even-spacing algorithm.
+		// ------------------------------------------------------------------
+		const getAngleSequence = (num: number): number[] => {
+			if (parentTreeNode.headerLevel === 0 || parentTreeNode === this.treeRoot) {
+				switch (num) {
+					case 1:
+						return [0]
+					case 2:
+						return [Math.PI / 6, 11 * Math.PI / 6]
+					case 3:
+						return [Math.PI / 4, 0, 7 * Math.PI / 4]
+					case 4:
+						return [Math.PI / 2, Math.PI / 6, 11 * Math.PI / 6, 3 * Math.PI / 2]
+					case 5:
+						return [2 * Math.PI / 3, Math.PI / 3, 0, 5 * Math.PI / 3, 4 * Math.PI / 3]
+					default:
+						break
+				}
+			}
+			// Default: even distribution starting from the top (-π/2)
+			const increment = num === 1 ? 0 : (2 * Math.PI) / num
+			return Array.from({ length: num }, (_v, i) => -Math.PI / 2 + i * increment)
+		}
+
+		const angles = getAngleSequence(n)
+
+		// We still need a generic increment value for certain geometric
+		// calculations even when we use a custom sequence.
+		const angleIncrement = n === 1 ? 0 : (2 * Math.PI) / n
+
+		// Size-aware radius calculation --------------------------------------------------
+		const margin = 40
+		// --- Determine dimensions -------------------------------------------------
+		const maxChildWidth = Math.max(...children.map(c => c.canvasNode!.width))
+		const maxChildHeight = Math.max(...children.map(c => c.canvasNode!.height))
+		// Half-diagonals (distance from center to farthest corner)
+		const childHalfDiag = Math.sqrt(Math.pow(maxChildWidth / 2, 2) + Math.pow(maxChildHeight / 2, 2))
+		const parentHalfDiag = Math.sqrt(Math.pow(parentCanvas.width / 2, 2) + Math.pow(parentCanvas.height / 2, 2))
+		// a) radius so that children don't overlap each other (circle-packing)
+		const childCircleRadius = n === 1 ? 0 : (childHalfDiag * 2 + margin) / (2 * Math.sin(angleIncrement / 2))
+		// b) radius so that children clear the parent completely
+		const parentClearRadius = parentHalfDiag + childHalfDiag + margin
+		const minRadius = Math.max(childCircleRadius, parentClearRadius)
+		// c) User-configurable base radius scaled by hierarchy depth
+		const depthLevel = this.getDepth(parentTreeNode) + 1 // children are one level deeper
+		const baseDepthRadius = this.baseRadius() + (depthLevel - 1) * 150
+		// Final radius meets all constraints
+		let radius = Math.max(baseDepthRadius, minRadius)
+
+		// Give extra breathing space when we have many children (default-case path)
+		if (n > 5) {
+			radius *= 1.2
+		}
+
+		children.forEach((child, idx) => {
+			const angle = angles[idx % angles.length]
+			let newX = parentCanvas.x + radius * Math.cos(angle)
+			let newY = parentCanvas.y + radius * Math.sin(angle)
+
+			// Clamp to a reasonable viewport (avoid negative off-canvas positions)
+			newX = Math.max(50, newX)
+			newY = Math.max(0, newY)
+
+			child.canvasNode!.moveAndResize({
+				x: newX,
+				y: newY,
+				width: child.canvasNode!.width,
+				height: child.canvasNode!.height
+			})
+
+			// Recursive layout for grandchildren
+			if (child.children.length) {
+				this.applyRadialLayout(child)
+			}
+		})
+	}
 
 	constructor(
 		canvas: any,
@@ -363,6 +476,10 @@ class StreamingHandler {
 				this.topLevelCurrent = newTreeNode
 			}
 
+			// After creating the node, apply radial layout on its parent to keep
+			// siblings evenly distributed during streaming.
+			this.applyRadialLayout(parentTreeNode)
+
 			this.logDebug(`Created tree node for header: "${header.text}" (level ${header.level})`)
 
 		} catch (error) {
@@ -442,10 +559,8 @@ class StreamingHandler {
 			// Create edge if hierarchy is enabled and there's a parent
 			if (this.settings.enableMarkdownHierarchy && parentTreeNode?.canvasNode) {
 				try {
-					(this.canvas as any).createEdge?.(parentTreeNode.canvasNode, canvasNode, {
-						fromSide: 'right',
-						toSide: 'left'
-					})
+					const sides = this.getEdgeSides(parentTreeNode.canvasNode, canvasNode)
+						; (this.canvas as any).createEdge?.(parentTreeNode.canvasNode, canvasNode, sides)
 					this.logDebug('Created edge between nodes')
 				} catch (edgeError) {
 					this.logDebug('Edge creation failed', edgeError)
@@ -876,6 +991,23 @@ class StreamingHandler {
 		renderNode(this.treeRoot)
 		return lines.join('\n')
 	}
+
+	private getEdgeSides(parent: CanvasNode, child: CanvasNode) {
+		const dx = child.x - parent.x
+		const dy = child.y - parent.y
+		// Prefer the dominant axis to decide the connection side
+		if (Math.abs(dx) >= Math.abs(dy)) {
+			// Horizontal dominance
+			return dx > 0
+				? { fromSide: 'right', toSide: 'left' } // child is to the right
+				: { fromSide: 'left', toSide: 'right' } // child is to the left
+		} else {
+			// Vertical dominance
+			return dy > 0
+				? { fromSide: 'bottom', toSide: 'top' } // child is below
+				: { fromSide: 'top', toSide: 'bottom' } // child is above
+		}
+	}
 }
 
 export function noteGenerator(
@@ -1038,41 +1170,6 @@ export function noteGenerator(
 			return { messages, tokenCount }
 		} else {
 			return { messages: [], tokenCount: 0 }
-		}
-	}
-
-	// Unified API call function that handles both OpenAI and Gemini
-	const callAI = async (
-		messages: openai.ChatCompletionRequestMessage[]
-	): Promise<string | undefined> => {
-		const provider = getProviderFromModel(settings.apiModel)
-		const apiKey = provider === 'OpenAI' ? settings.openaiApiKey : settings.geminiApiKey
-
-		if (provider === 'Gemini') {
-			return await getGeminiCompletion(
-				apiKey,
-				settings.apiModel,
-				messages.map(msg => ({
-					role: msg.role,
-					content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
-				})),
-				{
-					temperature: settings.temperature,
-					maxOutputTokens: settings.maxResponseTokens || undefined
-				}
-			)
-		} else {
-			// Default to OpenAI
-			return await getChatGPTCompletion(
-				apiKey,
-				settings.apiUrl,
-				settings.apiModel,
-				messages,
-				{
-					max_tokens: settings.maxResponseTokens || undefined,
-					temperature: settings.temperature
-				}
-			)
 		}
 	}
 
@@ -1309,173 +1406,138 @@ export function noteGenerator(
 		new Notice(`Sending ${messages.length} notes with ${tokenCount} tokens to AI`)
 
 		//------------------------------------------------------------------
-		// Streaming path – keep real-time updates when enabled
+		// Streaming radial mind-map layout (default path)
 		//------------------------------------------------------------------
-		if (settings.enableStreaming) {
-			const streamingHandler = new StreamingHandler(
-				canvas,
-				node,
-				placeholder,
-				settings,
-				logDebug
-			)
+		// Ensure live-splitting flags are ON so radial layout works during streaming
+		const streamingSettings = {
+			...settings,
+			enableMarkdownSplitting: true,
+			enableStreamingSplit: true
+		} as typeof settings
 
-			// Store reference for debug utilities
-			lastStreamingHandler = streamingHandler
+		const streamingHandler = new StreamingHandler(
+			canvas,
+			node,
+			placeholder,
+			streamingSettings,
+			logDebug
+		)
 
-			new Notice(`Streaming ${settings.apiModel} response...`)
+		// Store reference for debug utilities
+		lastStreamingHandler = streamingHandler
 
-			await callAIStreaming(
-				messages,
-				streamingHandler.onToken,
-				streamingHandler.onComplete,
-				streamingHandler.onError
-			)
+		// Radial layout helpers ------------------------------------------------
+		const baseRadius = settings.markdownHierarchySpacing || 300
+		const margin = 40
 
-			await canvas.requestSave()
-			return // StreamingHandler manages note updates, skip non-streaming path
+		const getEdgeSides = (from: CanvasNode, to: CanvasNode) => {
+			const dx = to.x - from.x
+			const dy = to.y - from.y
+			if (Math.abs(dx) >= Math.abs(dy)) {
+				return dx > 0 ? { fromSide: 'right', toSide: 'left' } : { fromSide: 'left', toSide: 'right' }
+			} else {
+				return dy > 0 ? { fromSide: 'bottom', toSide: 'top' } : { fromSide: 'top', toSide: 'bottom' }
+			}
 		}
 
-		//------------------------------------------------------------------
-		// Non-streaming path – fallback & post-processing
-		//------------------------------------------------------------------
+		const applyLayout = () => {
+			const tree = streamingHandler.getTreeStructure()
+			if (!tree) return
 
-		try {
-			logDebug('messages', messages)
+			const centerNode = node // original selected canvas note
 
-			// Force non-streaming response generation (already ensured by branch)
-			const generated = await callAI(messages)
+			const getAngleSequence = (n: number): number[] => {
+				// Reserve a gap based on the size of the *parent* (centre) note so that children
+				// never overlap with it.  We measure the half-diagonal of the centre node and
+				// translate that into an angular gap on the chosen base radius.
+				const centerHalfDiag = Math.hypot(centerNode.width, centerNode.height) / 2
+				const gap = 2 * Math.asin(centerHalfDiag / baseRadius) + 0.1 // add small padding
 
-			if (!generated) {
-				new Notice('Empty or unreadable response from AI')
-				canvas.removeNode(placeholder)
-				return
+				// usable angular span = 2π – gap
+				const span = 2 * Math.PI - gap
+
+				// centre the gap around 0 rad (right-hand side).
+				// That means the first legal angle starts at  +gap/2 and the last ends at –gap/2.
+				const start = gap / 2               // +22.5°
+				const increment = span / n          // n = number of children
+
+				return Array.from({ length: n }, (_v, i) => start + i * increment)
 			}
 
-			//------------------------------------------------------------------
-			// 1. Parse markdown into an ordered list of header sections
-			//------------------------------------------------------------------
+			const arrange = (treeNode: TreeNode, depth: number, parentCanvas: CanvasNode) => {
+				const children = treeNode.children.filter(c => c.canvasNode)
+				if (!children.length) return
 
-			type Section = { level: number; header: string; content: string }
-			const sections: Section[] = []
+				const n = children.length
+				const angles = getAngleSequence(n)
 
-			let currentHeaderLine = ''
-			let currentLines: string[] = []
+				// --- Radius calculation (same as before) ---------------------------
+				const maxChildWidth = Math.max(...children.map(c => c.canvasNode!.width))
+				const maxChildHeight = Math.max(...children.map(c => c.canvasNode!.height))
+				const childHalfDiag = Math.sqrt(Math.pow(maxChildWidth / 2, 2) + Math.pow(maxChildHeight / 2, 2))
+				const parentHalfDiag = Math.sqrt(Math.pow(parentCanvas.width / 2, 2) + Math.pow(parentCanvas.height / 2, 2))
+				const childCircleRadius = n === 1 ? 0 : (childHalfDiag * 2 + margin) / (2 * Math.sin((2 * Math.PI) / (Math.max(n, 2) * 2)))
+				const parentClearRadius = parentHalfDiag + childHalfDiag + margin
+				let radius = Math.max(childCircleRadius, parentClearRadius)
 
-			const pushSection = () => {
-				if (!currentHeaderLine) return
-				const level = (currentHeaderLine.match(/^#+/) || [''])[0].length
-				const headerText = currentHeaderLine.replace(/^#+\s*/, '').trim()
-				sections.push({
-					level,
-					header: headerText,
-					content: currentLines.join('\n').trim()
+				// Give extra breathing space when we have many children (default-case path)
+				if (n > 5) {
+					radius *= 1.2
+				}
+
+				children.forEach((child, idx) => {
+					// Fallback safety for when angles.length < n (shouldn't happen)
+					const angle = angles[idx % angles.length]
+
+					let newX = parentCanvas.x + radius * Math.cos(angle)
+					let newY = parentCanvas.y + radius * Math.sin(angle)
+
+					newX = Math.max(50, newX)
+					newY = Math.max(-radius, newY)
+
+					child.canvasNode!.moveAndResize({
+						x: newX,
+						y: newY,
+						width: child.canvasNode!.width,
+						height: child.canvasNode!.height
+					})
+
+					try {
+						const sides = getEdgeSides(parentCanvas, child.canvasNode!)
+							; (canvas as any).createEdge?.(parentCanvas, child.canvasNode!, sides)
+					} catch (edgeErr) {
+						logDebug('Edge creation failed', edgeErr)
+					}
+
+					// Recurse into grandchildren
+					arrange(child, depth + 1, child.canvasNode!)
 				})
 			}
 
-			for (const line of generated.split(/\r?\n/)) {
-				if (/^#{1,6}\s+/.test(line)) {
-					pushSection()
-					currentHeaderLine = line
-					currentLines = []
-				} else {
-					currentLines.push(line)
-				}
-			}
-			pushSection()
-
-			// Count headers for rule decisions
-			const h1Exists = sections.some(s => s.level === 1)
-			const h2Sections = sections.filter(s => s.level === 2)
-			const h2Count = h2Sections.length
-
-			//------------------------------------------------------------------
-			// 2. Build the canvas hierarchy according to the rules
-			//------------------------------------------------------------------
-
-			// Decide the absolute root canvas node (original note always wins)
-			const rootNode = node
-
-			// Helper to position nodes
-			const horizontalSpacing = settings.markdownHierarchySpacing || 450
-			const verticalSpacing = 200
-
-			let h1CanvasNode: CanvasNode | null = null
-			// Stack keeps current branch of canvas nodes
-			const stack: { level: number; node: CanvasNode }[] = [{ level: 0, node: rootNode }]
-
-			const createCanvasChild = (parent: CanvasNode, text: string, level: number): CanvasNode => {
-				const childNode = createNode(
-					canvas,
-					parent,
-					{
-						text,
-						size: { height: calcHeight({ text, parentHeight: parent.height }) }
-					},
-					{ color: (level === 1 ? '1' : level === 2 ? '4' : '5'), chat_role: 'assistant' }
-				)
-
-				// Simple positioning: offset right by level, and vertically by index among siblings
-				const siblings = (stack.filter(s => s.node === parent).length) // approx
-				childNode.moveAndResize({
-					x: parent.x + horizontalSpacing,
-					y: parent.y + siblings * verticalSpacing,
-					width: childNode.width,
-					height: childNode.height
-				})
-
-				// Edge (best-effort)
-				try {
-					(canvas as any).createEdge?.(parent, childNode, { fromSide: 'right', toSide: 'left' })
-				} catch (edgeError) {
-					logDebug('Edge creation failed', edgeError)
-				}
-
-				return childNode
-			}
-
-			for (const sec of sections) {
-				const headerText = `${'#'.repeat(sec.level)} ${sec.header}`
-				const fullText = `${headerText}\n\n${sec.content}`.trim()
-
-				let parentForThis: CanvasNode
-				if (sec.level === 1) {
-					parentForThis = rootNode
-					stack.length = 1
-				} else if (sec.level === 2) {
-					// Single H2 special case
-					if (h2Count === 1) {
-						parentForThis = rootNode
-					} else {
-						parentForThis = h1Exists && h1CanvasNode ? h1CanvasNode : rootNode
-					}
-					stack.length = h1Exists && h1CanvasNode ? 2 : 1
-				} else {
-					// Level >=3 : attach to nearest shallower header
-					while (stack.length && stack[stack.length - 1].level >= sec.level) {
-						stack.pop()
-					}
-					parentForThis = stack[stack.length - 1].node
-				}
-
-				const newNode = createCanvasChild(parentForThis, fullText, sec.level)
-
-				// Track special references
-				if (sec.level === 1) {
-					h1CanvasNode = newNode
-				}
-
-				stack.push({ level: sec.level, node: newNode })
-			}
-
-			canvas.selectOnly(rootNode, false /* startEditing */)
-
-		} catch (error) {
-			new Notice(`Error calling AI: ${error.message || error}`)
-			canvas.removeNode(placeholder)
-		} finally {
-			await canvas.requestSave()
+			// Begin with the root (which might not have its own canvas node) and use
+			// the originally selected note as the visual centre.
+			arrange(tree, 1, centerNode)
 		}
+
+		// Override completion to apply layout after streaming ends
+		const originalOnComplete = streamingHandler.onComplete
+		streamingHandler.onComplete = (fullText: string) => {
+			originalOnComplete(fullText)
+			applyLayout()
+			canvas.requestSave()
+		}
+
+		new Notice(`Streaming ${settings.apiModel} response...`)
+
+		await callAIStreaming(
+			messages,
+			streamingHandler.onToken,
+			streamingHandler.onComplete,
+			streamingHandler.onError
+		)
+
+		await canvas.requestSave()
+		return
 	}
 
 	/**
@@ -1543,3 +1605,5 @@ export function noteGenerator(
 		getLastTreeStructure
 	}
 }
+
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
