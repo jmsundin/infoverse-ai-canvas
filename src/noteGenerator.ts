@@ -988,19 +988,126 @@ class StreamingHandler {
 	}
 
 	private getEdgeSides(parent: CanvasNode, child: CanvasNode) {
-		const dx = child.x - parent.x
-		const dy = child.y - parent.y
-		// Prefer the dominant axis to decide the connection side
-		if (Math.abs(dx) >= Math.abs(dy)) {
-			// Horizontal dominance
-			return dx > 0
-				? { fromSide: 'right', toSide: 'left' } // child is to the right
-				: { fromSide: 'left', toSide: 'right' } // child is to the left
-		} else {
-			// Vertical dominance
-			return dy > 0
-				? { fromSide: 'bottom', toSide: 'top' } // child is below
-				: { fromSide: 'top', toSide: 'bottom' } // child is above
+		// Get all existing edges to check for crossings
+		const existingEdges = this.getExistingEdges()
+
+		// Calculate connection points for all four sides of each node
+		const getConnectionPoints = (node: CanvasNode) => {
+			const centerX = node.x + node.width / 2
+			const centerY = node.y + node.height / 2
+
+			return {
+				top: { x: centerX, y: node.y },
+				bottom: { x: centerX, y: node.y + node.height },
+				left: { x: node.x, y: centerY },
+				right: { x: node.x + node.width, y: centerY }
+			}
+		}
+
+		// Check if two line segments intersect
+		const linesIntersect = (p1: { x: number, y: number }, p2: { x: number, y: number },
+			p3: { x: number, y: number }, p4: { x: number, y: number }): boolean => {
+			const denominator = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y)
+			if (denominator === 0) return false // parallel lines
+
+			const ua = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / denominator
+			const ub = ((p2.x - p1.x) * (p1.y - p3.y) - (p2.y - p1.y) * (p1.x - p3.x)) / denominator
+
+			return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1
+		}
+
+		// Check if a potential edge would cross any existing edges
+		const wouldCross = (fromPoint: { x: number, y: number }, toPoint: { x: number, y: number }): boolean => {
+			for (const edge of existingEdges) {
+				if (linesIntersect(fromPoint, toPoint, edge.from, edge.to)) {
+					return true
+				}
+			}
+			return false
+		}
+
+		// Calculate path cost considering distance and crossings
+		const calculatePathCost = (fromPoint: { x: number, y: number }, toPoint: { x: number, y: number }): number => {
+			const distance = Math.sqrt(
+				Math.pow(toPoint.x - fromPoint.x, 2) +
+				Math.pow(toPoint.y - fromPoint.y, 2)
+			)
+
+			// Heavy penalty for crossing existing edges
+			const crossingPenalty = wouldCross(fromPoint, toPoint) ? distance * 10 : 0
+
+			return distance + crossingPenalty
+		}
+
+		const fromPoints = getConnectionPoints(parent)
+		const toPoints = getConnectionPoints(child)
+
+		// Find the best connection that minimizes crossings and distance
+		let minCost = Infinity
+		let bestConnection = { fromSide: 'right', toSide: 'left' }
+
+		const sides = ['top', 'bottom', 'left', 'right'] as const
+
+		for (const fromSide of sides) {
+			for (const toSide of sides) {
+				const fromPoint = fromPoints[fromSide]
+				const toPoint = toPoints[toSide]
+
+				const cost = calculatePathCost(fromPoint, toPoint)
+
+				if (cost < minCost) {
+					minCost = cost
+					bestConnection = { fromSide, toSide }
+				}
+			}
+		}
+
+		return bestConnection
+	}
+
+	/**
+	 * Get existing edges from the canvas to check for crossings
+	 */
+	private getExistingEdges(): Array<{ from: { x: number, y: number }, to: { x: number, y: number } }> {
+		try {
+			const canvasData = (this.canvas as any).getData?.()
+			if (!canvasData?.edges) return []
+
+			const edges: Array<{ from: { x: number, y: number }, to: { x: number, y: number } }> = []
+
+			for (const edge of canvasData.edges) {
+				const fromNode = canvasData.nodes?.find((n: any) => n.id === edge.fromNode)
+				const toNode = canvasData.nodes?.find((n: any) => n.id === edge.toNode)
+
+				if (fromNode && toNode) {
+					// Calculate actual connection points based on edge sides
+					const fromPoint = this.getActualConnectionPoint(fromNode, edge.fromSide || 'right')
+					const toPoint = this.getActualConnectionPoint(toNode, edge.toSide || 'left')
+
+					edges.push({ from: fromPoint, to: toPoint })
+				}
+			}
+
+			return edges
+		} catch (error) {
+			this.logDebug('Failed to get existing edges:', error)
+			return []
+		}
+	}
+
+	/**
+	 * Get the actual connection point for a node and side
+	 */
+	private getActualConnectionPoint(nodeData: any, side: string): { x: number, y: number } {
+		const centerX = nodeData.x + nodeData.width / 2
+		const centerY = nodeData.y + nodeData.height / 2
+
+		switch (side) {
+			case 'top': return { x: centerX, y: nodeData.y }
+			case 'bottom': return { x: centerX, y: nodeData.y + nodeData.height }
+			case 'left': return { x: nodeData.x, y: centerY }
+			case 'right': return { x: nodeData.x + nodeData.width, y: centerY }
+			default: return { x: centerX, y: centerY }
 		}
 	}
 }
@@ -1464,13 +1571,122 @@ export function noteGenerator(
 		const margin = 40
 
 		const getEdgeSides = (from: CanvasNode, to: CanvasNode) => {
-			const dx = to.x - from.x
-			const dy = to.y - from.y
-			if (Math.abs(dx) >= Math.abs(dy)) {
-				return dx > 0 ? { fromSide: 'right', toSide: 'left' } : { fromSide: 'left', toSide: 'right' }
-			} else {
-				return dy > 0 ? { fromSide: 'bottom', toSide: 'top' } : { fromSide: 'top', toSide: 'bottom' }
+			// Get all existing edges to check for crossings
+			const getExistingEdges = (): Array<{ from: { x: number, y: number }, to: { x: number, y: number } }> => {
+				try {
+					const canvasData = (canvas as any).getData?.()
+					if (!canvasData?.edges) return []
+
+					const edges: Array<{ from: { x: number, y: number }, to: { x: number, y: number } }> = []
+
+					for (const edge of canvasData.edges) {
+						const fromNode = canvasData.nodes?.find((n: any) => n.id === edge.fromNode)
+						const toNode = canvasData.nodes?.find((n: any) => n.id === edge.toNode)
+
+						if (fromNode && toNode) {
+							// Calculate actual connection points based on edge sides
+							const fromPoint = getActualConnectionPoint(fromNode, edge.fromSide || 'right')
+							const toPoint = getActualConnectionPoint(toNode, edge.toSide || 'left')
+
+							edges.push({ from: fromPoint, to: toPoint })
+						}
+					}
+
+					return edges
+				} catch (error) {
+					logDebug('Failed to get existing edges:', error)
+					return []
+				}
 			}
+
+			// Get the actual connection point for a node and side
+			const getActualConnectionPoint = (nodeData: any, side: string): { x: number, y: number } => {
+				const centerX = nodeData.x + nodeData.width / 2
+				const centerY = nodeData.y + nodeData.height / 2
+
+				switch (side) {
+					case 'top': return { x: centerX, y: nodeData.y }
+					case 'bottom': return { x: centerX, y: nodeData.y + nodeData.height }
+					case 'left': return { x: nodeData.x, y: centerY }
+					case 'right': return { x: nodeData.x + nodeData.width, y: centerY }
+					default: return { x: centerX, y: centerY }
+				}
+			}
+
+			const existingEdges = getExistingEdges()
+
+			// Calculate connection points for all four sides of each node
+			const getConnectionPoints = (node: CanvasNode) => {
+				const centerX = node.x + node.width / 2
+				const centerY = node.y + node.height / 2
+
+				return {
+					top: { x: centerX, y: node.y },
+					bottom: { x: centerX, y: node.y + node.height },
+					left: { x: node.x, y: centerY },
+					right: { x: node.x + node.width, y: centerY }
+				}
+			}
+
+			// Check if two line segments intersect
+			const linesIntersect = (p1: { x: number, y: number }, p2: { x: number, y: number },
+				p3: { x: number, y: number }, p4: { x: number, y: number }): boolean => {
+				const denominator = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y)
+				if (denominator === 0) return false // parallel lines
+
+				const ua = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / denominator
+				const ub = ((p2.x - p1.x) * (p1.y - p3.y) - (p2.y - p1.y) * (p1.x - p3.x)) / denominator
+
+				return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1
+			}
+
+			// Check if a potential edge would cross any existing edges
+			const wouldCross = (fromPoint: { x: number, y: number }, toPoint: { x: number, y: number }): boolean => {
+				for (const edge of existingEdges) {
+					if (linesIntersect(fromPoint, toPoint, edge.from, edge.to)) {
+						return true
+					}
+				}
+				return false
+			}
+
+			// Calculate path cost considering distance and crossings
+			const calculatePathCost = (fromPoint: { x: number, y: number }, toPoint: { x: number, y: number }): number => {
+				const distance = Math.sqrt(
+					Math.pow(toPoint.x - fromPoint.x, 2) +
+					Math.pow(toPoint.y - fromPoint.y, 2)
+				)
+
+				// Heavy penalty for crossing existing edges
+				const crossingPenalty = wouldCross(fromPoint, toPoint) ? distance * 10 : 0
+
+				return distance + crossingPenalty
+			}
+
+			const fromPoints = getConnectionPoints(from)
+			const toPoints = getConnectionPoints(to)
+
+			// Find the best connection that minimizes crossings and distance
+			let minCost = Infinity
+			let bestConnection = { fromSide: 'right', toSide: 'left' }
+
+			const sides = ['top', 'bottom', 'left', 'right'] as const
+
+			for (const fromSide of sides) {
+				for (const toSide of sides) {
+					const fromPoint = fromPoints[fromSide]
+					const toPoint = toPoints[toSide]
+
+					const cost = calculatePathCost(fromPoint, toPoint)
+
+					if (cost < minCost) {
+						minCost = cost
+						bestConnection = { fromSide, toSide }
+					}
+				}
+			}
+
+			return bestConnection
 		}
 
 		const applyLayout = () => {
