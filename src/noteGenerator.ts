@@ -90,7 +90,8 @@ class StreamingHandler {
 	// Radial layout helpers (streaming)
 	// ---------------------------------------------------------------------
 	private baseRadius() {
-		return this.settings.markdownHierarchySpacing || 300
+		// Default hierarchy spacing constant (was markdownHierarchySpacing setting)
+		return 300
 	}
 
 	/** Compute depth of a tree node (root=0) */
@@ -206,11 +207,10 @@ class StreamingHandler {
 		this.parentNode = parentNode
 		this.currentNode = initialNode
 		this.startTime = Date.now()
-		this.enableLiveSplitting = settings.enableMarkdownSplitting && settings.enableStreamingSplit
+		this.enableLiveSplitting = false
 
 		// Debug log the initialization
 		this.logDebug(`StreamingHandler initialized:`, {
-			enableMarkdownSplitting: settings.enableMarkdownSplitting,
 			enableStreamingSplit: settings.enableStreamingSplit,
 			enableLiveSplitting: this.enableLiveSplitting
 		})
@@ -552,7 +552,7 @@ class StreamingHandler {
 			treeNode.canvasNode = canvasNode
 
 			// Create edge if hierarchy is enabled and there's a parent
-			if (this.settings.enableMarkdownHierarchy && parentTreeNode?.canvasNode) {
+			if (parentTreeNode?.canvasNode) {
 				try {
 					const sides = this.getEdgeSides(parentTreeNode.canvasNode, canvasNode)
 						; (this.canvas as any).createEdge?.(parentTreeNode.canvasNode, canvasNode, sides)
@@ -611,7 +611,7 @@ class StreamingHandler {
 		const siblingIndex = siblings.indexOf(treeNode)
 
 		// Position children to the right of parent
-		const horizontalSpacing = this.settings.markdownHierarchySpacing || 450
+		const horizontalSpacing = 450
 		const verticalSpacing = 200
 
 		return {
@@ -750,11 +750,6 @@ class StreamingHandler {
 		// Debug every 10 tokens to avoid spam
 		if (this.tokenCount % 10 === 0) {
 			this.logDebug(`Token ${this.tokenCount}: currentText.length = ${this.currentText.length}`)
-		}
-
-		// Try header-based splitting if enabled
-		if (this.enableLiveSplitting) {
-			await this.tryHeaderBasedSplit()
 		}
 
 		// Update progress
@@ -1387,7 +1382,6 @@ export function noteGenerator(
 				// the user has global splitting turned on in plugin settings.
 				const singleResponseSettings = {
 					...settings,
-					enableMarkdownSplitting: false,
 					enableStreamingSplit: false
 				} as typeof settings
 
@@ -1540,28 +1534,174 @@ export function noteGenerator(
 		}
 
 		//------------------------------------------------------------------
-		// Streaming radial mind-map layout (default path)
+		// Stream into single note first, then split into mindmap after completion
 		//------------------------------------------------------------------
-		// Ensure live-splitting flags are ON so radial layout works during streaming
-		const streamingSettings = {
+		// Disable live-splitting so all content goes into one note during streaming
+		const singleNoteSettings = {
 			...settings,
-			enableMarkdownSplitting: true,
-			enableStreamingSplit: true
+			enableStreamingSplit: false
 		} as typeof settings
 
 		const streamingHandler = new StreamingHandler(
 			canvas,
 			node,
 			placeholder,
-			streamingSettings,
+			singleNoteSettings,
 			logDebug
 		)
 
 		// Store reference for debug utilities
 		lastStreamingHandler = streamingHandler
 
+		// Post-processing function to split single note into mindmap
+		const splitIntoMindmap = async (fullText: string, rootNode: CanvasNode) => {
+			// Parse headers from the completed text
+			const parseHeaders = (text: string) => {
+				const headers: Array<{
+					level: number
+					text: string
+					startIndex: number
+					endIndex: number
+					fullLine: string
+				}> = []
+
+				const lines = text.split('\n')
+				let currentIndex = 0
+
+				for (let i = 0; i < lines.length; i++) {
+					const line = lines[i]
+					const headerMatch = line.match(/^(#{1,6})\s+(.+)$/)
+
+					if (headerMatch) {
+						const level = headerMatch[1].length
+						const headerText = headerMatch[2].trim()
+
+						headers.push({
+							level,
+							text: headerText,
+							startIndex: currentIndex,
+							endIndex: currentIndex + line.length,
+							fullLine: line
+						})
+					}
+
+					currentIndex += line.length + 1 // +1 for newline
+				}
+
+				return headers
+			}
+
+			const headers = parseHeaders(fullText)
+			if (headers.length === 0) {
+				logDebug('No headers found, keeping single note')
+				return [rootNode]
+			}
+
+			// Determine hierarchy levels (only use first 2 levels)
+			const firstHeaderLevel = Math.min(...headers.map(h => h.level))
+			const allowedLevels = [firstHeaderLevel, firstHeaderLevel + 1]
+			const filteredHeaders = headers.filter(h => allowedLevels.includes(h.level))
+
+			if (filteredHeaders.length === 0) {
+				return [rootNode]
+			}
+
+			logDebug(`Splitting into ${filteredHeaders.length} nodes based on headers`)
+
+			// Extract content sections
+			const sections: Array<{
+				header: typeof filteredHeaders[0]
+				content: string
+				isTopLevel: boolean
+			}> = []
+
+			for (let i = 0; i < filteredHeaders.length; i++) {
+				const header = filteredHeaders[i]
+				const nextHeader = filteredHeaders[i + 1]
+
+				const startIndex = header.startIndex
+				const endIndex = nextHeader ? nextHeader.startIndex : fullText.length
+				const content = fullText.slice(startIndex, endIndex).trim()
+
+				sections.push({
+					header,
+					content,
+					isTopLevel: header.level === firstHeaderLevel
+				})
+			}
+
+			// Create nodes for each section
+			const createdNodes: CanvasNode[] = []
+			const topLevelNodes: CanvasNode[] = []
+
+			// Handle root content (content before first header)
+			const firstHeaderIndex = filteredHeaders[0].startIndex
+			const rootContent = fullText.slice(0, firstHeaderIndex).trim()
+
+			if (rootContent) {
+				// Update the original root node with pre-header content
+				rootNode.setText(rootContent)
+				rootNode.moveAndResize({
+					x: rootNode.x,
+					y: rootNode.y,
+					width: 400,
+					height: calcHeight({ text: rootContent, parentHeight: node.height })
+				})
+				createdNodes.push(rootNode)
+			} else {
+				// Remove the placeholder if no root content
+				canvas.removeNode(rootNode)
+			}
+
+			// Create nodes for each header section
+			for (const section of sections) {
+				const color = section.header.level === firstHeaderLevel ? '1' : '4' // Red for H1, Green for H2
+
+				const newNode = createNode(
+					canvas,
+					node,
+					{
+						text: section.content,
+						size: {
+							height: calcHeight({
+								text: section.content,
+								parentHeight: node.height
+							})
+						}
+					},
+					{
+						color: color,
+						chat_role: 'assistant'
+					}
+				)
+
+				createdNodes.push(newNode)
+
+				if (section.isTopLevel) {
+					topLevelNodes.push(newNode)
+				}
+			}
+
+			return { allNodes: createdNodes, topLevelNodes, rootNode: rootContent ? rootNode : null }
+		}
+
 		// Radial layout helpers ------------------------------------------------
 		const margin = 40
+
+		const getAngleSequence = (n: number): number[] => {
+			if (n === 1) return [0]
+
+			// Mirror-balanced ordering (0°, 180°, 60°, 240°, 120° …)
+			const increment = (2 * Math.PI) / n
+			const baseAngles = Array.from({ length: n }, (_v, i) => i * increment)
+			const ordered: number[] = []
+			while (baseAngles.length) {
+				ordered.push(baseAngles.shift()!)
+				if (baseAngles.length) ordered.push(baseAngles.pop()!)
+			}
+
+			return ordered
+		}
 
 		const getEdgeSides = (from: CanvasNode, to: CanvasNode) => {
 			// Get all existing edges to check for crossings
@@ -1682,81 +1822,7 @@ export function noteGenerator(
 			return bestConnection
 		}
 
-		const applyLayout = () => {
-			const tree = streamingHandler.getTreeStructure()
-			if (!tree) return
 
-			const centerNode = placeholder // central AI-generated note
-
-			const getAngleSequence = (n: number): number[] => {
-				if (n === 1) return [0]
-
-				// Mirror-balanced ordering (0°, 180°, 60°, 240°, 120° …)
-				const increment = (2 * Math.PI) / n
-				const baseAngles = Array.from({ length: n }, (_v, i) => i * increment)
-				const ordered: number[] = []
-				while (baseAngles.length) {
-					ordered.push(baseAngles.shift()!)
-					if (baseAngles.length) ordered.push(baseAngles.pop()!)
-				}
-
-				return ordered
-			}
-
-			const arrange = (treeNode: TreeNode, depth: number, parentCanvas: CanvasNode) => {
-				const children = treeNode.children.filter(c => c.canvasNode)
-				if (!children.length) return
-
-				const n = children.length
-				const angles = getAngleSequence(n)
-
-				// --- Radius calculation (same as before) ---------------------------
-				const maxChildWidth = Math.max(...children.map(c => c.canvasNode!.width))
-				const maxChildHeight = Math.max(...children.map(c => c.canvasNode!.height))
-				const childHalfDiag = Math.sqrt(Math.pow(maxChildWidth / 2, 2) + Math.pow(maxChildHeight / 2, 2))
-				const parentHalfDiag = Math.sqrt(Math.pow(parentCanvas.width / 2, 2) + Math.pow(parentCanvas.height / 2, 2))
-				const childCircleRadius = n === 1 ? 0 : (childHalfDiag * 2 + margin) / (2 * Math.sin((2 * Math.PI) / (Math.max(n, 2) * 2)))
-				const parentClearRadius = parentHalfDiag + childHalfDiag + margin
-				let radius = Math.max(childCircleRadius, parentClearRadius)
-
-				// Give extra breathing space when we have many children (default-case path)
-				if (n > 5) {
-					radius *= 1.2
-				}
-
-				children.forEach((child, idx) => {
-					// Fallback safety for when angles.length < n (shouldn't happen)
-					const angle = angles[idx % angles.length]
-
-					let newX = parentCanvas.x + radius * Math.cos(angle)
-					let newY = parentCanvas.y + radius * Math.sin(angle)
-
-					newX = Math.max(50, newX)
-					newY = Math.max(-radius, newY)
-
-					child.canvasNode!.moveAndResize({
-						x: newX,
-						y: newY,
-						width: child.canvasNode!.width,
-						height: child.canvasNode!.height
-					})
-
-					try {
-						const sides = getEdgeSides(parentCanvas, child.canvasNode!)
-							; (canvas as any).createEdge?.(parentCanvas, child.canvasNode!, sides)
-					} catch (edgeErr) {
-						logDebug('Edge creation failed', edgeErr)
-					}
-
-					// Recurse into grandchildren
-					arrange(child, depth + 1, child.canvasNode!)
-				})
-			}
-
-			// Begin with the root (which might not have its own canvas node) and use
-			// the originally selected note as the visual centre.
-			arrange(tree, 1, centerNode)
-		}
 
 		// Helper to extract first H1 or H2 title from markdown
 		const extractTitle = (markdown: string): string => {
@@ -1803,12 +1869,87 @@ export function noteGenerator(
 			}
 		}
 
-		// Override completion to apply layout and then adjust group
+		// Override completion to split into mindmap and apply layout
 		const originalOnComplete = streamingHandler.onComplete
-		streamingHandler.onComplete = (fullText: string) => {
+		streamingHandler.onComplete = async (fullText: string) => {
 			originalOnComplete(fullText)
-			applyLayout()
-			adjustGroupBoundsAndTitle(fullText)
+
+			try {
+				// Split the single note into mindmap structure
+				const result = await splitIntoMindmap(fullText, placeholder)
+
+				if (Array.isArray(result)) {
+					// No headers found, keep single note
+					adjustGroupBoundsAndTitle(fullText)
+				} else {
+					// Apply radial layout to the created nodes
+					const { topLevelNodes, rootNode } = result
+
+					if (topLevelNodes.length > 0) {
+						// Create a center point for the layout
+						const centerNode = rootNode || topLevelNodes[0]
+
+						// Apply radial layout around center
+						const applyRadialLayoutToNodes = (center: CanvasNode, nodes: CanvasNode[]) => {
+							if (nodes.length === 0) return
+
+							const n = nodes.length
+							const angles = getAngleSequence(n)
+
+							// Calculate radius based on node sizes
+							const maxWidth = Math.max(...nodes.map(node => node.width))
+							const maxHeight = Math.max(...nodes.map(node => node.height))
+							const nodeHalfDiag = Math.sqrt(Math.pow(maxWidth / 2, 2) + Math.pow(maxHeight / 2, 2))
+							const centerHalfDiag = Math.sqrt(Math.pow(center.width / 2, 2) + Math.pow(center.height / 2, 2))
+
+							const childCircleRadius = n === 1 ? 0 : (nodeHalfDiag * 2 + margin) / (2 * Math.sin(Math.PI / n))
+							const parentClearRadius = centerHalfDiag + nodeHalfDiag + margin
+							let radius = Math.max(childCircleRadius, parentClearRadius, 300) // minimum 300px radius
+
+							if (n > 5) {
+								radius *= 1.2
+							}
+
+							nodes.forEach((nodeToPosition, idx) => {
+								if (nodeToPosition === center) return // Don't move the center node
+
+								const angle = angles[idx % angles.length]
+								let newX = center.x + radius * Math.cos(angle)
+								let newY = center.y + radius * Math.sin(angle)
+
+								newX = Math.max(50, newX)
+								newY = Math.max(0, newY)
+
+								nodeToPosition.moveAndResize({
+									x: newX,
+									y: newY,
+									width: nodeToPosition.width,
+									height: nodeToPosition.height
+								})
+
+								// Create edge from center to this node
+								try {
+									const sides = getEdgeSides(center, nodeToPosition)
+										; (canvas as any).createEdge?.(center, nodeToPosition, sides)
+								} catch (edgeErr) {
+									logDebug('Edge creation failed', edgeErr)
+								}
+							})
+						}
+
+						// Apply layout to top-level nodes around center
+						const nodesToLayout = topLevelNodes.filter(n => n !== centerNode)
+						applyRadialLayoutToNodes(centerNode, nodesToLayout)
+					}
+
+					// Adjust group bounds to include all nodes
+					adjustGroupBoundsAndTitle(fullText)
+				}
+			} catch (error) {
+				logDebug('Error in post-processing split:', error)
+				adjustGroupBoundsAndTitle(fullText)
+			}
+
 			canvas.requestSave()
 		}
 

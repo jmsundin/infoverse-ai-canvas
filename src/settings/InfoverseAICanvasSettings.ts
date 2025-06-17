@@ -147,41 +147,6 @@ export interface InfoverseAICanvasSettings {
 	 * Enable streaming performance metrics and debugging
 	 */
 	enableStreamingMetrics: boolean
-
-	/**
-	 * Enable recursive markdown splitting for hierarchical note creation
-	 */
-	enableMarkdownSplitting: boolean
-
-	/**
-	 * Chunk size for markdown splitting (characters)
-	 */
-	markdownChunkSize: number
-
-	/**
-	 * Overlap between chunks when splitting markdown (characters)
-	 */
-	markdownChunkOverlap: number
-
-	/**
-	 * Keep header separators when splitting markdown
-	 */
-	markdownKeepSeparators: boolean
-
-	/**
-	 * Auto-create parent-child relationships in canvas
-	 */
-	enableMarkdownHierarchy: boolean
-
-	/**
-	 * Horizontal spacing between hierarchy levels in canvas
-	 */
-	markdownHierarchySpacing: number
-
-	/**
-	 * Show tree visualization when splitting markdown
-	 */
-	showMarkdownTreeVisualization: boolean
 }
 
 export const DEFAULT_SYSTEM_PROMPT = `
@@ -270,13 +235,6 @@ export const DEFAULT_SETTINGS: InfoverseAICanvasSettings = {
 	streamingRetryAttempts: 3,
 	streamingTimeout: 10000,
 	enableStreamingMetrics: false,
-	enableMarkdownSplitting: false,
-	markdownChunkSize: 1000,
-	markdownChunkOverlap: 200,
-	markdownKeepSeparators: true,
-	enableMarkdownHierarchy: true,
-	markdownHierarchySpacing: 300,
-	showMarkdownTreeVisualization: true
 }
 
 export function getModels() {

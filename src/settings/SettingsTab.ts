@@ -133,8 +133,6 @@ export class SettingsTab extends PluginSettingTab {
 				})
 			})
 
-
-
 		new Setting(containerEl)
 			.setName('Max input tokens')
 			.setDesc(
@@ -422,101 +420,6 @@ export class SettingsTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.mindmapLayoutAlgorithm)
 					.onChange(async (value) => {
 						this.plugin.settings.mindmapLayoutAlgorithm = value as 'radial' | 'hierarchical' | 'organic' | 'force'
-						await this.plugin.saveSettings()
-					})
-			})
-
-		containerEl.createEl('h3', { text: 'Markdown Splitting' })
-
-		new Setting(containerEl)
-			.setName('Enable markdown splitting')
-			.setDesc('Enable recursive markdown splitting for hierarchical note creation based on header levels')
-			.addToggle((component) => {
-				component
-					.setValue(this.plugin.settings.enableMarkdownSplitting)
-					.onChange(async (value) => {
-						this.plugin.settings.enableMarkdownSplitting = value
-						await this.plugin.saveSettings()
-					})
-			})
-
-		new Setting(containerEl)
-			.setName('Chunk size')
-			.setDesc('Maximum size of each markdown chunk in characters')
-			.addText((text) =>
-				text
-					.setValue(this.plugin.settings.markdownChunkSize.toString())
-					.onChange(async (value) => {
-						const parsed = parseInt(value)
-						if (!isNaN(parsed) && parsed > 0) {
-							this.plugin.settings.markdownChunkSize = parsed
-							await this.plugin.saveSettings()
-						}
-					})
-			)
-
-		new Setting(containerEl)
-			.setName('Chunk overlap')
-			.setDesc('Number of characters to overlap between chunks for context preservation')
-			.addText((text) =>
-				text
-					.setValue(this.plugin.settings.markdownChunkOverlap.toString())
-					.onChange(async (value) => {
-						const parsed = parseInt(value)
-						if (!isNaN(parsed) && parsed >= 0) {
-							this.plugin.settings.markdownChunkOverlap = parsed
-							await this.plugin.saveSettings()
-						}
-					})
-			)
-
-		new Setting(containerEl)
-			.setName('Keep header separators')
-			.setDesc('Keep markdown header separators (# ## ###) when splitting content')
-			.addToggle((component) => {
-				component
-					.setValue(this.plugin.settings.markdownKeepSeparators)
-					.onChange(async (value) => {
-						this.plugin.settings.markdownKeepSeparators = value
-						await this.plugin.saveSettings()
-					})
-			})
-
-		new Setting(containerEl)
-			.setName('Enable hierarchy visualization')
-			.setDesc('Auto-create parent-child relationships and edges between hierarchical notes in canvas')
-			.addToggle((component) => {
-				component
-					.setValue(this.plugin.settings.enableMarkdownHierarchy)
-					.onChange(async (value) => {
-						this.plugin.settings.enableMarkdownHierarchy = value
-						await this.plugin.saveSettings()
-					})
-			})
-
-		new Setting(containerEl)
-			.setName('Hierarchy spacing')
-			.setDesc('Horizontal spacing between hierarchy levels in canvas (pixels)')
-			.addText((text) =>
-				text
-					.setValue(this.plugin.settings.markdownHierarchySpacing.toString())
-					.onChange(async (value) => {
-						const parsed = parseInt(value)
-						if (!isNaN(parsed) && parsed > 0) {
-							this.plugin.settings.markdownHierarchySpacing = parsed
-							await this.plugin.saveSettings()
-						}
-					})
-			)
-
-		new Setting(containerEl)
-			.setName('Show tree visualization')
-			.setDesc('Display a tree structure visualization when splitting markdown')
-			.addToggle((component) => {
-				component
-					.setValue(this.plugin.settings.showMarkdownTreeVisualization)
-					.onChange(async (value) => {
-						this.plugin.settings.showMarkdownTreeVisualization = value
 						await this.plugin.saveSettings()
 					})
 			})
