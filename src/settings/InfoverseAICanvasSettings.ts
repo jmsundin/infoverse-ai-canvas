@@ -102,51 +102,6 @@ export interface InfoverseAICanvasSettings {
 	 * Mindmap layout algorithm (radial, hierarchical, organic, force)
 	 */
 	mindmapLayoutAlgorithm: 'radial' | 'hierarchical' | 'organic' | 'force'
-
-	/**
-	 * Enable streaming mode for real-time response display
-	 */
-	enableStreaming: boolean
-
-	/**
-	 * Auto-split responses while streaming (creates new nodes as content flows)
-	 */
-	enableStreamingSplit: boolean
-
-	/**
-	 * Update interval for streaming text display (milliseconds)
-	 */
-	streamingUpdateInterval: number
-
-	/**
-	 * Minimum chunk size before creating a new node when streaming and splitting
-	 */
-	streamingChunkSize: number
-
-	/**
-	 * Show streaming progress indicators (token count, speed, etc.)
-	 */
-	showStreamingProgress: boolean
-
-	/**
-	 * Enable pause/resume functionality during streaming
-	 */
-	enableStreamingControls: boolean
-
-	/**
-	 * Auto-retry on streaming errors (number of retries)
-	 */
-	streamingRetryAttempts: number
-
-	/**
-	 * Timeout for streaming requests in milliseconds
-	 */
-	streamingTimeout: number
-
-	/**
-	 * Enable streaming performance metrics and debugging
-	 */
-	enableStreamingMetrics: boolean
 }
 
 export const DEFAULT_SYSTEM_PROMPT = `
@@ -226,15 +181,6 @@ export const DEFAULT_SETTINGS: InfoverseAICanvasSettings = {
 	enableMindmapColorCoding: false,
 	mindmapSpacing: 'normal',
 	mindmapLayoutAlgorithm: 'organic',
-	enableStreaming: true,
-	enableStreamingSplit: false,
-	streamingUpdateInterval: 500,
-	streamingChunkSize: 100,
-	showStreamingProgress: false,
-	enableStreamingControls: false,
-	streamingRetryAttempts: 3,
-	streamingTimeout: 10000,
-	enableStreamingMetrics: false,
 }
 
 export function getModels() {

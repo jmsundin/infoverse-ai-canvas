@@ -87,6 +87,16 @@ class StreamingHandler {
 	private topLevelCurrent: TreeNode | null = null // last node at firstHeaderLevel to attach children to
 
 	// ---------------------------------------------------------------------
+	// Fixed streaming configuration (settings previously user-configurable)
+	// ---------------------------------------------------------------------
+	private readonly showStreamingProgress = true
+	private readonly enableStreamingControls = true
+	private readonly enableStreamingMetrics = false
+	private readonly streamingUpdateInterval = 500 // ms
+	private readonly streamingRetryAttempts = 3
+	private readonly streamingTimeout = 30000 // ms
+
+	// ---------------------------------------------------------------------
 	// Radial layout helpers (streaming)
 	// ---------------------------------------------------------------------
 	private baseRadius() {
@@ -210,10 +220,7 @@ class StreamingHandler {
 		this.enableLiveSplitting = false
 
 		// Debug log the initialization
-		this.logDebug(`StreamingHandler initialized:`, {
-			enableStreamingSplit: settings.enableStreamingSplit,
-			enableLiveSplitting: this.enableLiveSplitting
-		})
+		this.logDebug(`StreamingHandler initialized`)
 
 		// Initialize the tree structure if live splitting is enabled
 		if (this.enableLiveSplitting) {
@@ -222,12 +229,12 @@ class StreamingHandler {
 		}
 
 		// Initialize progress tracking if enabled
-		if (this.settings.showStreamingProgress) {
+		if (this.showStreamingProgress) {
 			this.createProgressIndicator()
 		}
 
 		// Initialize streaming controls if enabled
-		if (this.settings.enableStreamingControls) {
+		if (this.enableStreamingControls) {
 			this.createStreamingControls()
 		}
 	}
@@ -287,7 +294,7 @@ class StreamingHandler {
 	 * Update progress indicator
 	 */
 	private updateProgress() {
-		if (!this.progressNode || !this.settings.showStreamingProgress) return
+		if (!this.progressNode || !this.showStreamingProgress) return
 
 		const elapsed = (Date.now() - this.startTime) / 1000
 		const charRate = elapsed > 0 ? Math.round(this.currentText.length / elapsed) : 0
@@ -297,7 +304,7 @@ class StreamingHandler {
 			? `📊 Header-Based Streaming: ${this.tokenCount} tokens | ${nodeCount} nodes | ${charRate} chars/sec`
 			: `📊 Streaming: ${this.tokenCount} tokens | ${this.currentText.length} chars | ${charRate} chars/sec`
 
-		if (this.settings.enableStreamingMetrics) {
+		if (this.enableStreamingMetrics) {
 			const errorRate = this.errorCount > 0 ? `| ${this.errorCount} errors` : ''
 			const retryInfo = this.retryCount > 0 ? `| ${this.retryCount} retries` : ''
 			progressText += ` ${errorRate} ${retryInfo}`
@@ -720,7 +727,7 @@ class StreamingHandler {
 	 * Pause streaming
 	 */
 	pause() {
-		if (this.settings.enableStreamingControls) {
+		if (this.enableStreamingControls) {
 			this.isPaused = true
 			this.updateStreamingControls()
 			this.logDebug('Streaming paused')
@@ -731,7 +738,7 @@ class StreamingHandler {
 	 * Resume streaming
 	 */
 	resume() {
-		if (this.settings.enableStreamingControls) {
+		if (this.enableStreamingControls) {
 			this.isPaused = false
 			this.updateStreamingControls()
 			this.logDebug('Streaming resumed')
@@ -757,7 +764,7 @@ class StreamingHandler {
 
 		// Throttled updates to prevent overwhelming the UI
 		const now = Date.now()
-		if (now - this.lastUpdateTime >= this.settings.streamingUpdateInterval && !this.pendingUpdate) {
+		if (now - this.lastUpdateTime >= this.streamingUpdateInterval && !this.pendingUpdate) {
 			this.pendingUpdate = true
 			this.scheduleUpdate()
 		}
@@ -824,9 +831,9 @@ class StreamingHandler {
 		this.logDebug(`Streaming error (attempt ${this.retryCount + 1}):`, error)
 
 		// Auto-retry if enabled and within retry limit
-		if (this.retryCount < this.settings.streamingRetryAttempts) {
+		if (this.retryCount < this.streamingRetryAttempts) {
 			this.retryCount++
-			this.logDebug(`Retrying streaming (attempt ${this.retryCount}/${this.settings.streamingRetryAttempts})`)
+			this.logDebug(`Retrying streaming (attempt ${this.retryCount}/${this.streamingRetryAttempts})`)
 
 			// Update progress to show retry
 			this.updateProgress()
@@ -868,14 +875,14 @@ class StreamingHandler {
 			this.updateCurrentActiveNode()
 			this.lastUpdateTime = Date.now()
 			this.pendingUpdate = false
-		}, Math.max(0, this.settings.streamingUpdateInterval - (Date.now() - this.lastUpdateTime)))
+		}, Math.max(0, this.streamingUpdateInterval - (Date.now() - this.lastUpdateTime)))
 	}
 
 	/**
 	 * Create streaming control buttons if enabled
 	 */
 	private createStreamingControls() {
-		if (!this.settings.enableStreamingControls) return
+		if (!this.enableStreamingControls) return
 
 		try {
 			// Create control panel node
@@ -908,7 +915,7 @@ class StreamingHandler {
 	 * Update streaming control buttons
 	 */
 	private updateStreamingControls() {
-		if (!this.controlNode || !this.settings.enableStreamingControls) return
+		if (!this.controlNode || !this.enableStreamingControls) return
 
 		const controlText = this.isPaused ? '▶️ Resume | ⏹️ Stop' : '⏸️ Pause | ⏹️ Stop'
 		const statusText = this.isPaused ? '(Paused)' : '(Streaming...)'
@@ -1310,7 +1317,7 @@ export function noteGenerator(
 					max_tokens: settings.maxResponseTokens || undefined,
 					temperature: settings.temperature
 				},
-				settings.streamingTimeout || 30000 // Use timeout from settings
+				30000 // Fixed streaming timeout (30s)
 			)
 		}
 	}
@@ -1377,19 +1384,11 @@ export function noteGenerator(
 			try {
 				logDebug('messages', messages)
 
-				// For the "Generate single AI response" action we force-disable
-				// markdown splitting so that the reply stays in one note even if
-				// the user has global splitting turned on in plugin settings.
-				const singleResponseSettings = {
-					...settings,
-					enableStreamingSplit: false
-				} as typeof settings
-
 				const streamingHandler = new StreamingHandler(
 					canvas,
 					node,
 					created,
-					singleResponseSettings,
+					settings,
 					logDebug
 				)
 
@@ -1400,7 +1399,8 @@ export function noteGenerator(
 
 				// Add timeout fallback to ensure completion is always called
 				let isStreamingCompleted = false
-				const maxStreamingTimeout = (settings.streamingTimeout || 30000) + 10000 // Add 10s buffer
+				const STREAMING_TIMEOUT = 30000
+				const maxStreamingTimeout = STREAMING_TIMEOUT + 10000 // Add 10s buffer
 
 				const timeoutId = setTimeout(() => {
 					if (!isStreamingCompleted) {
@@ -1536,17 +1536,11 @@ export function noteGenerator(
 		//------------------------------------------------------------------
 		// Stream into single note first, then split into mindmap after completion
 		//------------------------------------------------------------------
-		// Disable live-splitting so all content goes into one note during streaming
-		const singleNoteSettings = {
-			...settings,
-			enableStreamingSplit: false
-		} as typeof settings
-
 		const streamingHandler = new StreamingHandler(
 			canvas,
 			node,
 			placeholder,
-			singleNoteSettings,
+			settings,
 			logDebug
 		)
 
