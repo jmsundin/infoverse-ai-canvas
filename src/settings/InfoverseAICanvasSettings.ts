@@ -54,11 +54,6 @@ export interface InfoverseAICanvasSettings {
 	systemPrompt: string
 
 	/**
-	 * The system prompt used for single (non-mindmap) AI responses
-	 */
-	singleResponsePrompt: string
-
-	/**
 	 * Enable debug output in the console
 	 */
 	debug: boolean
@@ -190,8 +185,11 @@ export interface InfoverseAICanvasSettings {
 }
 
 export const DEFAULT_SYSTEM_PROMPT = `
-	You are a helpful and knowledgeable AI assistant.
-	Your primary goal is to answer the user's question comprehensively and accurately.
+	You are a critical-thinking assistant bot.
+	Consider the intent of my questions before responding.
+	Do not restate my information unless I ask for it.
+	Do not include caveats or disclaimers.
+	Use step-by-step reasoning. Be brief.
 
 	Your entire response MUST be formatted using Markdown, strictly adhering to the structural guidelines below. This structure is specifically designed to allow the output to be easily visualized as a mind map or graph, where headers represent nodes and content represents node details.
 
@@ -220,16 +218,7 @@ export const DEFAULT_SYSTEM_PROMPT = `
 		*   Ensure a clear, logical hierarchical structure that visually reflects the relationships between concepts in your answer.
 
 	6.  **Spacing:**
-		*   Ensure there is exactly one blank line (i.e., two newline characters) after each node's content *before* the next header (if any). If a node has no content, there should still be one blank line before the next header. *Correction: Your original "single newline character" is fine if you mean \`content\n## Next Header\`. If you want a visual blank line in the raw Markdown, it's two newlines. I'll adjust based on your original intent which is common.*
-		*   Let's stick to your original wording to avoid confusion: Ensure a single newline character after each node's content before the next header (if any).
-
-	**Content Guidelines:**
-
-	*   Employ step-by-step reasoning where appropriate to explain complex topics.
-	*   Be brief and concise in your explanations for each node, while remaining informative.
-	*   Carefully consider the intent behind the user's question to provide the most relevant information.
-	*   Do not restate the user's question or information provided by the user unless explicitly asked to do so.
-	*   Do not include unnecessary caveats or disclaimers.
+		*   Ensure a single newline character after each node's content before the next header (if any).
 
 	**Example of Expected Structure:**
 
@@ -249,7 +238,6 @@ export const DEFAULT_SYSTEM_PROMPT = `
 	## Main Topic 2
 	Content for main topic 2.
 	\`\`\`
-	Process the user's question below and provide your answer according to all the above instructions:
 `.trim()
 
 export const DEFAULT_SETTINGS: InfoverseAICanvasSettings = {
@@ -263,11 +251,6 @@ export const DEFAULT_SETTINGS: InfoverseAICanvasSettings = {
 	lastGeminiModel: '',
 	temperature: 1,
 	systemPrompt: DEFAULT_SYSTEM_PROMPT,
-	singleResponsePrompt: `You are a critical-thinking assistant bot.
-Consider the intent of my questions before responding.
-Do not restate my information unless I ask for it.
-Do not include caveats or disclaimers.
-Use step-by-step reasoning. Be brief.`.trim(),
 	debug: false,
 	maxInputTokens: 0,
 	maxResponseTokens: 0,

@@ -133,20 +133,7 @@ export class SettingsTab extends PluginSettingTab {
 				})
 			})
 
-		// System prompt for single-response generation
-		new Setting(containerEl)
-			.setName('System prompt (single response)')
-			.setDesc('Prompt used when you click "Generate single AI response".')
-			.addTextArea((component) => {
-				component.inputEl.rows = 6
-				component.inputEl.style.width = '300px'
-				component.inputEl.style.fontSize = '10px'
-				component.setValue(this.plugin.settings.singleResponsePrompt)
-				component.onChange(async (value) => {
-					this.plugin.settings.singleResponsePrompt = value
-					await this.plugin.saveSettings()
-				})
-			})
+
 
 		new Setting(containerEl)
 			.setName('Max input tokens')

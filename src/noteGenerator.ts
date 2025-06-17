@@ -1356,14 +1356,7 @@ export function noteGenerator(
 			await canvas.requestSave()
 			await sleep(200)
 
-			// Temporarily override the system prompt for single-response generation
-			const originalSystemPrompt = settings.systemPrompt
-			settings.systemPrompt = settings.singleResponsePrompt || originalSystemPrompt
-
 			const { messages, tokenCount } = await buildMessages(node)
-
-			// Restore the original system prompt so other actions (e.g., mind-map) remain unaffected
-			settings.systemPrompt = originalSystemPrompt
 
 			if (!messages.length) {
 				return
