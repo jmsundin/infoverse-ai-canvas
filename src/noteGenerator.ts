@@ -2,7 +2,7 @@
 import { TiktokenModel, encodingForModel } from 'js-tiktoken'
 import { App, ItemView, Notice } from 'obsidian'
 import { CanvasNode } from './obsidian/canvas-internal'
-import { CanvasView, calcHeight, createNode } from './obsidian/canvas-patches'
+import { CanvasView, calcHeight, createNode, createGroup, updateGroup } from './obsidian/canvas-patches'
 import {
 	CHAT_MODELS,
 	chatModelByName,
@@ -126,25 +126,20 @@ class StreamingHandler {
 		// even-spacing algorithm.
 		// ------------------------------------------------------------------
 		const getAngleSequence = (num: number): number[] => {
-			if (parentTreeNode.headerLevel === 0 || parentTreeNode === this.treeRoot) {
-				switch (num) {
-					case 1:
-						return [0]
-					case 2:
-						return [Math.PI / 6, 11 * Math.PI / 6]
-					case 3:
-						return [Math.PI / 4, 0, 7 * Math.PI / 4]
-					case 4:
-						return [Math.PI / 2, Math.PI / 6, 11 * Math.PI / 6, 3 * Math.PI / 2]
-					case 5:
-						return [2 * Math.PI / 3, Math.PI / 3, 0, 5 * Math.PI / 3, 4 * Math.PI / 3]
-					default:
-						break
+			if (num === 1) return [0]
+
+			// Mirrored left-right ordering to keep the layout visually balanced.
+			// Example (n = 6): 0°, 180°, 60°, 240°, 120°, 300°
+			const increment = (2 * Math.PI) / num
+			const bases = Array.from({ length: num }, (_v, i) => i * increment)
+			const ordered: number[] = []
+			while (bases.length) {
+				ordered.push(bases.shift()!)
+				if (bases.length) {
+					ordered.push(bases.pop()!)
 				}
 			}
-			// Default: even distribution starting from the top (-π/2)
-			const increment = num === 1 ? 0 : (2 * Math.PI) / num
-			return Array.from({ length: num }, (_v, i) => -Math.PI / 2 + i * increment)
+			return ordered
 		}
 
 		const angles = getAngleSequence(n)
@@ -1406,6 +1401,45 @@ export function noteGenerator(
 		new Notice(`Sending ${messages.length} notes with ${tokenCount} tokens to AI`)
 
 		//------------------------------------------------------------------
+		// Optionally create a containing group (frame). If the user's
+		// original note is already inside a group we reuse that group and
+		// skip creating a new one.
+		//------------------------------------------------------------------
+
+		const isNodeInsideGroup = (canvasInst: any, n: CanvasNode): boolean => {
+			try {
+				const data = canvasInst.getData()
+				if (!data?.nodes) return false
+				return data.nodes
+					.filter((gn: any) => gn.type === 'group')
+					.some((g: any) => {
+						const cx = n.x + n.width / 2
+						const cy = n.y + n.height / 2
+						return cx >= g.x && cx <= g.x + g.width && cy >= g.y && cy <= g.y + g.height
+					})
+			} catch (_) {
+				return false
+			}
+		}
+
+		let groupId: string | null = null
+
+		if (!isNodeInsideGroup(canvas, node)) {
+			const initialGroupMargin = 100
+			groupId = createGroup(canvas, {
+				label: 'AI Mind-map',
+				pos: {
+					x: placeholder.x - initialGroupMargin,
+					y: placeholder.y - initialGroupMargin
+				},
+				size: {
+					width: placeholder.width + initialGroupMargin * 2,
+					height: placeholder.height + initialGroupMargin * 2
+				}
+			})
+		}
+
+		//------------------------------------------------------------------
 		// Streaming radial mind-map layout (default path)
 		//------------------------------------------------------------------
 		// Ensure live-splitting flags are ON so radial layout works during streaming
@@ -1427,7 +1461,6 @@ export function noteGenerator(
 		lastStreamingHandler = streamingHandler
 
 		// Radial layout helpers ------------------------------------------------
-		const baseRadius = settings.markdownHierarchySpacing || 300
 		const margin = 40
 
 		const getEdgeSides = (from: CanvasNode, to: CanvasNode) => {
@@ -1444,24 +1477,21 @@ export function noteGenerator(
 			const tree = streamingHandler.getTreeStructure()
 			if (!tree) return
 
-			const centerNode = node // original selected canvas note
+			const centerNode = placeholder // central AI-generated note
 
 			const getAngleSequence = (n: number): number[] => {
-				// Reserve a gap based on the size of the *parent* (centre) note so that children
-				// never overlap with it.  We measure the half-diagonal of the centre node and
-				// translate that into an angular gap on the chosen base radius.
-				const centerHalfDiag = Math.hypot(centerNode.width, centerNode.height) / 2
-				const gap = 2 * Math.asin(centerHalfDiag / baseRadius) + 0.1 // add small padding
+				if (n === 1) return [0]
 
-				// usable angular span = 2π – gap
-				const span = 2 * Math.PI - gap
+				// Mirror-balanced ordering (0°, 180°, 60°, 240°, 120° …)
+				const increment = (2 * Math.PI) / n
+				const baseAngles = Array.from({ length: n }, (_v, i) => i * increment)
+				const ordered: number[] = []
+				while (baseAngles.length) {
+					ordered.push(baseAngles.shift()!)
+					if (baseAngles.length) ordered.push(baseAngles.pop()!)
+				}
 
-				// centre the gap around 0 rad (right-hand side).
-				// That means the first legal angle starts at  +gap/2 and the last ends at –gap/2.
-				const start = gap / 2               // +22.5°
-				const increment = span / n          // n = number of children
-
-				return Array.from({ length: n }, (_v, i) => start + i * increment)
+				return ordered
 			}
 
 			const arrange = (treeNode: TreeNode, depth: number, parentCanvas: CanvasNode) => {
@@ -1519,11 +1549,57 @@ export function noteGenerator(
 			arrange(tree, 1, centerNode)
 		}
 
-		// Override completion to apply layout after streaming ends
+		// Helper to extract first H1 or H2 title from markdown
+		const extractTitle = (markdown: string): string => {
+			const lines = markdown.split('\n')
+			for (const line of lines) {
+				const h1 = line.match(/^#\s+(.+)/)
+				if (h1) return h1[1].trim()
+				const h2 = line.match(/^##\s+(.+)/)
+				if (h2) return h2[1].trim()
+			}
+			return 'AI Mind-map'
+		}
+
+		// Calculate bounding box of all nodes generated by streaming
+		const adjustGroupBoundsAndTitle = (fullText: string) => {
+			const tree = streamingHandler.getTreeStructure()
+			if (!tree) return
+			const nodes: CanvasNode[] = []
+			const collect = (tn: any) => {
+				if (tn.canvasNode) nodes.push(tn.canvasNode)
+				tn.children?.forEach((c: any) => collect(c))
+			}
+			collect(tree)
+
+			if (!nodes.length) return
+
+			let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+			nodes.forEach(n => {
+				minX = Math.min(minX, n.x)
+				minY = Math.min(minY, n.y)
+				maxX = Math.max(maxX, n.x + n.width)
+				maxY = Math.max(maxY, n.y + n.height)
+			})
+
+			const margin = 80
+			if (groupId) {
+				updateGroup(canvas, groupId, {
+					x: minX - margin,
+					y: minY - margin,
+					width: maxX - minX + margin * 2,
+					height: maxY - minY + margin * 2,
+					label: extractTitle(fullText)
+				})
+			}
+		}
+
+		// Override completion to apply layout and then adjust group
 		const originalOnComplete = streamingHandler.onComplete
 		streamingHandler.onComplete = (fullText: string) => {
 			originalOnComplete(fullText)
 			applyLayout()
+			adjustGroupBoundsAndTitle(fullText)
 			canvas.requestSave()
 		}
 

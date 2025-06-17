@@ -278,3 +278,54 @@ export function trapError<T>(fn: (...params: unknown[]) => T) {
 		}
 	}
 }
+
+// Add helper to create a group (frame) node on the canvas
+export const createGroup = (
+	canvas: Canvas,
+	options: {
+		label: string
+		pos: { x: number; y: number }
+		size: { width: number; height: number }
+		color?: string
+	}
+) => {
+	if (!canvas) throw new Error('Invalid canvas')
+
+	const data = canvas.getData()
+	const groupId = randomHexString(16)
+
+	canvas.importData({
+		nodes: [
+			...data.nodes,
+			{
+				id: groupId,
+				type: 'group',
+				label: options.label,
+				x: options.pos.x,
+				y: options.pos.y,
+				width: options.size.width,
+				height: options.size.height,
+				color: options.color || undefined
+			}
+		],
+		edges: data.edges
+	})
+
+	canvas.requestFrame()
+
+	// Groups are rendered as a special node type; return its ID so callers can update it later
+	return groupId
+}
+
+// Update an existing group node (re-imports canvas data with modifications)
+export const updateGroup = (
+	canvas: Canvas,
+	groupId: string,
+	updates: Partial<{ x: number; y: number; width: number; height: number; label: string; color: string }>
+) => {
+	if (!canvas) return
+	const data = canvas.getData()
+	const newNodes = data.nodes.map(n => (n.id === groupId ? { ...n, ...updates } : n))
+	canvas.importData({ nodes: newNodes, edges: data.edges })
+	canvas.requestFrame()
+}
